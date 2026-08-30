@@ -228,8 +228,8 @@ pub fn classifier_attempts_label(goal: &GoalDisplayState) -> String {
 /// Format: `[Goal: {label}]  {tokens}  {elapsed}`
 ///
 /// When `hovered` is true the label is bolded/underlined to signal
-/// clickability.  When the goal is `Active`, a braille spinner driven
-/// by `tick` is prepended.
+/// clickability. When the goal is `Active`, a dot spinner driven by `tick`
+/// is prepended.
 pub fn goal_status_line(
     goal: &GoalDisplayState,
     theme: &Theme,
@@ -276,7 +276,7 @@ pub fn goal_status_line(
     let chip_name = "Goal";
     let goal_text = if is_active {
         let frames = crate::glyphs::dot_spinner_frames();
-        let frame = frames[(tick / 4) % frames.len()];
+        let frame = frames[(tick / crate::glyphs::DOT_SPINNER_DIVISOR as usize) % frames.len()];
         format!("{frame} {chip_name}: {label}")
     } else {
         format!("{chip_name}: {label}")

@@ -22,7 +22,7 @@ use crate::util::format_time_ago;
 /// Show each spinner frame for this many animation ticks. The frames
 /// themselves come from [`crate::glyphs::dot_spinner_frames`] so they
 /// degrade to an ASCII pulse on legacy Windows consoles.
-const SPINNER_DIVISOR: u64 = 4;
+const SPINNER_DIVISOR: u64 = crate::glyphs::DOT_SPINNER_DIVISOR;
 /// How many ticks each phase of the `NeedsInput` bullet blink lasts. At the
 /// ~30 Hz dashboard tick this toggles roughly every 0.33 s (≈1.5 Hz blink).
 const NEEDS_INPUT_BLINK_DIVISOR: u64 = 10;
@@ -4580,7 +4580,7 @@ mod tests {
         use std::time::SystemTime;
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 32));
         let mut state = DashboardState::new();
-        state.spinner_tick = 8;
+        state.spinner_tick = crate::glyphs::DOT_SPINNER_DIVISOR * 2;
         let theme = Theme::current();
         let now = SystemTime::now();
         let rows = vec![
@@ -6864,7 +6864,7 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 2));
         let theme = Theme::current();
         let mut state = DashboardState::new();
-        state.spinner_tick = 8; // → dot_spinner_frames()[2] = `⸬`.
+        state.spinner_tick = crate::glyphs::DOT_SPINNER_DIVISOR * 2; // → dot_spinner_frames()[2] = `⸬`.
         let row = DashboardRow {
             id: DashboardRowId::TopLevel(crate::app::agent::AgentId(1)),
             label: "who are you?".to_string(),

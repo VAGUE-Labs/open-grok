@@ -2036,7 +2036,8 @@ fn render_picker_content_inner(
     // Loading state — animated dot spinner centered in the content area.
     if loading {
         let spinner_frames = crate::glyphs::dot_spinner_frames();
-        let frame = spinner_frames[(loading_tick / 4) as usize % spinner_frames.len()];
+        let frame = spinner_frames
+            [(loading_tick / crate::glyphs::DOT_SPINNER_DIVISOR) as usize % spinner_frames.len()];
         let msg = format!("{frame} Loading\u{2026}");
         let msg_style = Style::default().fg(theme.gray);
         let cx = content_area.x + content_area.width.saturating_sub(msg.width() as u16) / 2;

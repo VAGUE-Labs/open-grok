@@ -35,7 +35,7 @@ use super::overlay::OverlayState;
 // Spinner
 // ---------------------------------------------------------------------------
 
-const SPINNER_DIVISOR: u64 = 4;
+const SPINNER_DIVISOR: u64 = crate::glyphs::DOT_SPINNER_DIVISOR;
 
 // ---------------------------------------------------------------------------
 // Shell command syntax highlighting (used by other modules too)

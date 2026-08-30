@@ -548,7 +548,7 @@ pub fn render_goal_detail(
     let is_active = matches!(goal.status, GoalDisplayStatus::Active);
     let spinner_prefix = if is_active {
         let frames = crate::glyphs::dot_spinner_frames();
-        let frame = frames[(tick / 4) % frames.len()];
+        let frame = frames[(tick / crate::glyphs::DOT_SPINNER_DIVISOR as usize) % frames.len()];
         format!("{frame} ")
     } else {
         String::new()

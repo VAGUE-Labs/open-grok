@@ -680,7 +680,10 @@ fn render_detail(
     let (glyph, glyph_style) = status_glyph_and_style(&run.status, theme);
     let spinner = if run.is_active() {
         let frames = crate::glyphs::dot_spinner_frames();
-        format!("{} ", frames[(tick / 4) % frames.len()])
+        format!(
+            "{} ",
+            frames[(tick / crate::glyphs::DOT_SPINNER_DIVISOR as usize) % frames.len()]
+        )
     } else {
         format!("{glyph} ")
     };
@@ -994,7 +997,7 @@ fn render_detail(
         let (glyph, glyph_style) = if running {
             let frames = crate::glyphs::dot_spinner_frames();
             (
-                frames[(tick / 4) % frames.len()],
+                frames[(tick / crate::glyphs::DOT_SPINNER_DIVISOR as usize) % frames.len()],
                 Style::default().fg(theme.accent_plan),
             )
         } else {

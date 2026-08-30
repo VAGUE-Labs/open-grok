@@ -607,7 +607,8 @@ impl AgentView {
         let icon = if is_running {
             let spinner_frames = crate::glyphs::dot_spinner_frames();
             let tick = self.tasks.tick_count();
-            let frame_idx = (tick / 4) as usize % spinner_frames.len();
+            let frame_idx =
+                (tick / crate::glyphs::DOT_SPINNER_DIVISOR) as usize % spinner_frames.len();
             spinner_frames[frame_idx]
         } else if info.and_then(|s| s.status.as_deref()) == Some("completed") {
             crate::glyphs::check_mark()
@@ -1484,7 +1485,8 @@ impl AgentView {
         );
         if running_count > 0 {
             let spinner_frames = crate::glyphs::dot_spinner_frames();
-            let frame_idx = (self.tasks.tick_count() / 4) as usize % spinner_frames.len();
+            let frame_idx = (self.tasks.tick_count() / crate::glyphs::DOT_SPINNER_DIVISOR) as usize
+                % spinner_frames.len();
             let frame = spinner_frames[frame_idx];
             let indicator = format!("{frame} {running_count}");
             let mut indicator_style = Style::default().fg(theme.accent_running).bg(theme.bg_base);

@@ -235,17 +235,21 @@ pub fn braille_spinner_frames() -> &'static [&'static str] {
     }
 }
 
-/// Pulsing dot progress-spinner frames (`⋅ : ⸬ ⁙`) normally; a quiet
+/// Number of animation ticks each dot-spinner glyph remains visible.
+pub const DOT_SPINNER_DIVISOR: u64 = 6;
+
+/// Pulsing dot progress-spinner frames (`⋅ ∶ ⸬ ⁙`) normally; a quiet
 /// 1-column dot cycle (`.`, `:`, `·`) on legacy ConHost.
 ///
-/// U+22C5 / U+2E2C / U+2059 are absent from the CP437 raster font, so the
-/// running-subagent / task rows (Tasks pane + Dashboard), the dashboard
-/// status chips, and the active-goal indicators fall back to a quiet dot
-/// cycle there — period, colon, and `·` (U+00B7, CP437 `0xFA`) all render
-/// on the raster font. Every frame in both sets is exactly 1 column.
+/// U+22C5 / U+2236 / U+2E2C / U+2059 are absent from the CP437 raster font,
+/// so the running-subagent / task rows (Tasks pane + Dashboard), the dashboard
+/// status chips, and the active-goal indicators fall back to a quiet dot cycle
+/// there — period, colon, and `·` (U+00B7, CP437 `0xFA`) all render on the
+/// raster font. Every frame in both sets is exactly 1 column.
 pub fn dot_spinner_frames() -> &'static [&'static str] {
     const FANCY: &[&str] = &[
-        "\u{22c5}", ":", "\u{2e2c}", "\u{2059}", "\u{22c5}", ":", "\u{2e2c}", "\u{2059}",
+        "\u{22c5}", "\u{2236}", "\u{2e2c}", "\u{2059}", "\u{22c5}", "\u{2236}", "\u{2e2c}",
+        "\u{2059}",
     ];
     const FALLBACK: &[&str] = &[".", ":", "\u{00b7}"];
     if is_legacy_windows_console() {
@@ -696,6 +700,7 @@ mod tests {
         assert_eq!(diamond_filled_char(), '\u{25C6}');
         assert_eq!(diamond_hollow_char(), '\u{25C7}');
         assert_eq!(braille_spinner_frames()[0], "\u{280b}");
+        assert_eq!(dot_spinner_frames()[1], "\u{2236}");
         assert_eq!(dot_spinner_frames()[2], "\u{2e2c}");
         assert_eq!(
             monitor_icon_frames(),
