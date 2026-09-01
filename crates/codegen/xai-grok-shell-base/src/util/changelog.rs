@@ -117,7 +117,7 @@ impl ChangelogManager {
     fn fetch_with(&self, offline: bool, base: &str) -> Changelog {
         if offline {
             return Changelog {
-                markdown: read_cache(&self.md_cache),
+                markdown: read_cache(&self.md_cache).or_else(bundled_markdown),
                 entries: self.read_json_cache(),
             };
         }
@@ -139,7 +139,7 @@ impl ChangelogManager {
         // any on-disk seed under `$OPENGROK_HOME` even when offline mode was not
         // explicitly requested — keeps PTY/integration tests deterministic.
         if markdown.is_none() {
-            markdown = read_cache(&self.md_cache);
+            markdown = read_cache(&self.md_cache).or_else(bundled_markdown);
         }
         if entries.is_none() {
             entries = self.read_json_cache();
@@ -208,6 +208,11 @@ fn read_cache(path: &std::path::Path) -> Option<String> {
     std::fs::read_to_string(path)
         .ok()
         .filter(|c| !c.trim().is_empty())
+}
+
+fn bundled_markdown() -> Option<String> {
+    let content = include_str!(concat!(env!("OUT_DIR"), "/bundled_changelog.md"));
+    (!content.trim().is_empty()).then(|| content.to_owned())
 }
 
 /// Strip `**bold**` markers and backticks from a description string.
@@ -295,6 +300,19 @@ mod tests {
             Some("# fallback md\n"),
             "CDN miss must fall back to the seeded CHANGELOG.md"
         );
+    }
+
+    #[test]
+    fn offline_mode_falls_back_to_bundled_release_notes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("grok-home-bundled");
+        std::fs::create_dir_all(&home).unwrap();
+
+        let changelog = manager_for(&home).fetch_with(true, CHANGELOG_BASE);
+        let markdown = changelog
+            .markdown
+            .expect("bundled release notes should be available offline");
+        assert!(markdown.contains("Open Grok v"));
     }
 
     #[test]
