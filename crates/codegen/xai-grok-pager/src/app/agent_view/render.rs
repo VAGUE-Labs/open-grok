@@ -2253,7 +2253,7 @@ impl AgentView {
         if let Some(dock) = &dock_data
             && layout.dock.height > 0
         {
-            crate::views::dock::render(buf, layout.dock, &theme, dock);
+            crate::views::dock::render(buf, layout.dock, &theme, dock, self.tasks.tick_count());
             let queue_body = crate::views::dock::queue_body_rect(layout.dock, dock);
             if queue_body.height > 0 {
                 let queue_focused = self.active_pane == ActivePane::Queue && !overlay_focused;

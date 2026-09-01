@@ -179,7 +179,7 @@ pub fn queue_body_rect(area: Rect, data: &DockData) -> Rect {
     }
 }
 
-pub fn render(buf: &mut Buffer, area: Rect, theme: &Theme, data: &DockData) {
+pub fn render(buf: &mut Buffer, area: Rect, theme: &Theme, data: &DockData, tick: u64) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -218,6 +218,7 @@ pub fn render(buf: &mut Buffer, area: Rect, theme: &Theme, data: &DockData) {
                     &data.rows(section)[index],
                     selected,
                     section == Section::Subagents,
+                    tick,
                 );
                 if selected {
                     highlight_row(buf, area, row_y, theme);
@@ -274,10 +275,13 @@ fn paint_row(
     row: &DockRow,
     selected: bool,
     openable: bool,
+    tick: u64,
 ) {
     let accent = Style::default().fg(theme.accent_running);
+    let frames = crate::glyphs::dot_spinner_frames();
+    let frame = frames[(tick / crate::glyphs::DOT_SPINNER_DIVISOR) as usize % frames.len()];
     let mut spans = vec![
-        Span::styled("  ◆ ", accent),
+        Span::styled(format!("  {frame} "), accent),
         Span::styled(row.kind.clone(), accent),
         Span::raw(" "),
         Span::styled(
@@ -397,7 +401,7 @@ mod tests {
         let theme = Theme::tokyonight();
         let area = Rect::new(0, 0, 40, 4);
         let mut buf = Buffer::empty(area);
-        render(&mut buf, area, &theme, &data);
+        render(&mut buf, area, &theme, &data, 0);
         assert!(row_text(&buf, 0).starts_with("▾ Queued 2 ─"), "expanded");
         assert_eq!(queue_body_rect(area, &data), Rect::new(0, 1, 40, 3));
     }
@@ -410,7 +414,7 @@ mod tests {
 
         let area = Rect::new(0, 0, 100, 7);
         let mut buf = Buffer::empty(area);
-        render(&mut buf, area, &theme, &data);
+        render(&mut buf, area, &theme, &data, 0);
 
         assert!(row_text(&buf, 0).starts_with("▾ Subagents 3 ─"));
         let first = row_text(&buf, 1);
@@ -436,7 +440,7 @@ mod tests {
 
         let area = Rect::new(0, 0, 80, 7);
         let mut buf = Buffer::empty(area);
-        render(&mut buf, area, &theme, &data);
+        render(&mut buf, area, &theme, &data, 0);
         assert!(row_text(&buf, 0).starts_with("▸ Subagents 3 ─"));
         assert!(row_text(&buf, 1).starts_with("▾ Tasks 1 ─"));
         assert!(row_text(&buf, 2).contains("Run cargo test -p theme (bg)"));
@@ -448,6 +452,39 @@ mod tests {
     }
 
     #[test]
+    fn active_rows_use_the_shared_spinner_and_advance_with_tick() {
+        let theme = Theme::tokyonight();
+        let data = DockData {
+            subagents: vec![row("Explore", "inspect code", "1s", true)],
+            tasks: vec![row("Run", "cargo test", "2s", true)],
+            watchers: vec![row("Monitor", "watch logs", "3s", true)],
+            subagents_expanded: true,
+            tasks_expanded: true,
+            watchers_expanded: true,
+            ..DockData::default()
+        };
+        let area = Rect::new(0, 0, 80, 6);
+        let frames = crate::glyphs::dot_spinner_frames();
+        let mut buf = Buffer::empty(area);
+        render(&mut buf, area, &theme, &data, 0);
+        let first_frame = frames[0];
+        assert!(row_text(&buf, 1).starts_with(&format!("  {first_frame} Explore")));
+        assert!(row_text(&buf, 3).starts_with(&format!("  {first_frame} Run")));
+        assert!(row_text(&buf, 5).starts_with(&format!("  {first_frame} Monitor")));
+
+        render(
+            &mut buf,
+            area,
+            &theme,
+            &data,
+            crate::glyphs::DOT_SPINNER_DIVISOR,
+        );
+        let next_frame = frames[1 % frames.len()];
+        assert!(row_text(&buf, 1).starts_with(&format!("  {next_frame} Explore")));
+        assert_ne!(first_frame, next_frame);
+    }
+
+    #[test]
     fn focused_cursor_highlights_and_shows_row_actions() {
         let theme = Theme::tokyonight();
         let mut data = sample();
@@ -455,7 +492,7 @@ mod tests {
         data.cursor = 1;
         let area = Rect::new(0, 0, 100, 7);
         let mut buf = Buffer::empty(area);
-        render(&mut buf, area, &theme, &data);
+        render(&mut buf, area, &theme, &data, 0);
 
         let first = row_text(&buf, 1);
         assert!(first.trim_end().ends_with("[↗] [stop]"), "{first}");
@@ -468,7 +505,7 @@ mod tests {
         data.focused = true;
         data.cursor = 4; // loop row: [subs hdr, tasks hdr, watchers hdr, monitor, loop]
         let mut buf = Buffer::empty(area);
-        render(&mut buf, area, &theme, &data);
+        render(&mut buf, area, &theme, &data, 0);
         let loop_row = row_text(&buf, 4);
         assert!(!loop_row.contains("[stop]"), "{loop_row}");
         assert!(!loop_row.contains("[↗]"), "{loop_row}");
@@ -506,7 +543,7 @@ mod tests {
         let data = sample();
         let area = Rect::new(0, 0, 30, 7);
         let mut buf = Buffer::empty(area);
-        render(&mut buf, area, &theme, &data);
+        render(&mut buf, area, &theme, &data, 0);
         assert!(!row_text(&buf, 1).contains("grok-4.5"));
     }
 }

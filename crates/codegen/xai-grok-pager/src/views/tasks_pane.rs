@@ -303,11 +303,11 @@ impl TaskEntry {
             // Collapse newlines so multi-line descriptions render on one row.
             let one_line = desc.replace('\n', " ");
             let theme = Theme::current();
-            // Prefix the description with a constant `Task` tag in the
-            // theme's secondary text color so the entry type is identifiable
-            // at a glance, the same way subagent rows lead with their
-            // persona/role label. The prefix is included in `label` so it
-            // is searchable (the tasks-pane filter matches against `label`).
+            // Prefix the description with a constant golden `Task` tag so the
+            // entry type is identifiable at a glance, the same way monitor
+            // and subagent rows lead with their semantic accent. The prefix
+            // is included in `label` so it is searchable (the tasks-pane
+            // filter matches against `label`).
             const PREFIX: &str = "Task ";
             let desc_style = if running {
                 Style::default().fg(theme.text_primary)
@@ -316,7 +316,7 @@ impl TaskEntry {
             };
             let label = format!("{PREFIX}{one_line}");
             let styled = Line::from(vec![
-                Span::styled(PREFIX, Style::default().fg(theme.text_secondary)),
+                Span::styled(PREFIX, Style::default().fg(theme.accent_plan)),
                 Span::styled(one_line, desc_style),
             ]);
             (label, styled)
@@ -2135,7 +2135,7 @@ mod tests {
     }
 
     #[test]
-    fn bg_task_styled_prefix_uses_secondary_color() {
+    fn bg_task_styled_prefix_uses_golden_color() {
         let mut task = make_bg_task("t3a", "cargo test --release", BgTaskStatus::Running);
         task.description = Some("Run release tests".into());
         let mut cache = HashMap::new();
@@ -2147,7 +2147,7 @@ mod tests {
         let theme = Theme::current();
         assert_eq!(styled.spans.len(), 2);
         assert_eq!(styled.spans[0].content.as_ref(), "Task ");
-        assert_eq!(styled.spans[0].style.fg, Some(theme.text_secondary));
+        assert_eq!(styled.spans[0].style.fg, Some(theme.accent_plan));
         assert_eq!(styled.spans[1].content.as_ref(), "Run release tests");
         assert_eq!(styled.spans[1].style.fg, Some(theme.text_primary));
     }
