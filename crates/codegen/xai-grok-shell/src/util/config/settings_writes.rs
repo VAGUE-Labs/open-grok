@@ -17,6 +17,10 @@ pub struct LocalFeatureFlagSpec {
 
 pub const LOCAL_FEATURE_FLAG_SPECS: &[LocalFeatureFlagSpec] = &[
     LocalFeatureFlagSpec {
+        key: "features.context_management.experimental_mode",
+        default: false,
+    },
+    LocalFeatureFlagSpec {
         key: "memory.enabled",
         default: false,
     },
@@ -78,6 +82,10 @@ pub const LOCAL_FEATURE_FLAG_SPECS: &[LocalFeatureFlagSpec] = &[
         default: false,
     },
     LocalFeatureFlagSpec {
+        key: "sandbox.profile",
+        default: false,
+    },
+    LocalFeatureFlagSpec {
         key: "sandbox.auto_allow_bash",
         default: false,
     },
@@ -98,6 +106,11 @@ fn read_nested_bool(root: &TomlValue, key: &str) -> Option<bool> {
     let value = key
         .split('.')
         .try_fold(root, |value, part| value.get(part))?;
+    if key == "sandbox.profile" {
+        return value
+            .as_str()
+            .map(|profile| !matches!(profile, "off" | "none"));
+    }
     if let Some(b) = value.as_bool() {
         return Some(b);
     }
@@ -166,7 +179,14 @@ fn set_nested_bool(root: &mut TomlValue, key: &str, value: bool) {
             current
                 .as_table_mut()
                 .expect("local feature flag parent must be a table")
-                .insert(part.to_string(), TomlValue::Boolean(value));
+                .insert(
+                    part.to_string(),
+                    if key == "sandbox.profile" {
+                        TomlValue::String(if value { "workspace" } else { "off" }.to_owned())
+                    } else {
+                        TomlValue::Boolean(value)
+                    },
+                );
             return;
         }
         let table = current
@@ -589,6 +609,14 @@ pub async fn set_code_mode(value: crate::agent::config::ToolModePreference) -> R
     update_config(|cfg| cfg.ui.code_mode = Some(value)).await
 }
 
+pub async fn set_codex_persistent_mode(value: bool) -> Result<()> {
+    update_config(|cfg| cfg.ui.codex_persistent_mode = Some(value)).await
+}
+
+pub async fn set_codex_guardian_review(value: bool) -> Result<()> {
+    update_config(|cfg| cfg.ui.codex_guardian_review = Some(value)).await
+}
+
 /// Persist the restart-required `[ui].image_generation_provider` route.
 pub async fn set_image_generation_provider(
     value: crate::agent::config::ImageGenerationProvider,
@@ -938,6 +966,7 @@ mod tests {
             local_feature_flag_default("suggestions.ai_enabled"),
             Some(false)
         );
+        assert_eq!(local_feature_flag_default("sandbox.profile"), Some(false));
         assert_eq!(
             local_feature_flag_default("sandbox.auto_allow_bash"),
             Some(false)
@@ -947,6 +976,23 @@ mod tests {
             Some(false)
         );
         assert_eq!(local_feature_flag_default("features.unknown"), None);
+    }
+
+    #[test]
+    fn sandbox_toggle_reads_profiles_and_writes_profile_strings() {
+        let mut root = TomlValue::Table(TomlMap::new());
+        assert_eq!(read_nested_bool(&root, "sandbox.profile"), None);
+        for (enabled, profile) in [(true, "workspace"), (false, "off")] {
+            set_nested_bool(&mut root, "sandbox.profile", enabled);
+            assert_eq!(root["sandbox"]["profile"].as_str(), Some(profile));
+            assert_eq!(read_nested_bool(&root, "sandbox.profile"), Some(enabled));
+        }
+        for profile in ["workspace", "strict", "read-only", "devbox", "custom"] {
+            root["sandbox"]["profile"] = TomlValue::String(profile.to_owned());
+            assert_eq!(read_nested_bool(&root, "sandbox.profile"), Some(true));
+        }
+        root["sandbox"]["profile"] = TomlValue::String("none".to_owned());
+        assert_eq!(read_nested_bool(&root, "sandbox.profile"), Some(false));
     }
 
     #[test]

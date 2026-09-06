@@ -1427,6 +1427,10 @@ pub struct AppView {
     pub has_claude_import: bool,
     /// When set, the welcome screen renders an interactive import modal instead of normal content.
     pub import_claude_modal: Option<crate::views::import_claude_modal::ImportClaudeModalState>,
+    /// When set, the five-step custom-provider wizard overlays the current
+    /// screen. It holds UI state only - every RPC is dispatched as an effect.
+    pub custom_provider_modal:
+        Option<crate::views::custom_provider_modal::CustomProviderModalState>,
     /// Doc viewer overlay for the welcome screen (release notes via Ctrl+L).
     pub welcome_doc_viewer: Option<crate::views::modal::ActiveModal>,
     /// Whether the pager uses fullscreen (alt-screen) or inline mode.
@@ -2237,6 +2241,7 @@ impl AppView {
             pending_screen_mode_switch: None,
             has_claude_import: false,
             import_claude_modal: None,
+            custom_provider_modal: None,
             welcome_doc_viewer: None,
             screen_mode: ScreenMode::Inline,
             show_resolved_model: true,
@@ -2621,7 +2626,8 @@ impl AppView {
         {
             return true;
         }
-        self.import_claude_modal.is_some()
+        self.custom_provider_modal.is_some()
+            || self.import_claude_modal.is_some()
             || self.voice_listening()
             || self.voice_state.pending_cold_start()
     }
@@ -3217,6 +3223,21 @@ impl AppView {
                 crate::views::tutorial::TutorialOutcome::Consumed => {}
             }
             return InputOutcome::Changed;
+        }
+        // The custom-provider wizard owns every keystroke while it is open, so
+        // Esc cancels from any step and a stray character never reaches the
+        // prompt underneath. Routing goes through dispatch, which owns the RPCs.
+        if self.custom_provider_modal.is_some() {
+            return match ev {
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    InputOutcome::Action(Action::CustomProviderWizardKey(*key))
+                }
+                Event::Paste(text) => {
+                    InputOutcome::Action(Action::CustomProviderWizardPaste(text.clone()))
+                }
+                Event::Mouse(_) => InputOutcome::Changed,
+                _ => InputOutcome::Unchanged,
+            };
         }
         let zdr_blocked = self.is_zdr_blocked();
         let has_access = self.has_access();
@@ -5297,6 +5318,16 @@ impl AppView {
                                 compact,
                             );
                         }
+                        if let Some(modal) = self.custom_provider_modal.as_mut() {
+                            let theme = crate::theme::Theme::current();
+                            crate::views::custom_provider_modal::render_custom_provider_modal(
+                                f.buffer_mut(),
+                                view_area,
+                                modal,
+                                &theme,
+                                compact,
+                            );
+                        }
                         if let Some(dialog) = self.new_worktree_dialog.as_ref() {
                             crate::views::new_worktree_dialog::render_new_worktree_dialog(
                                 view_area,
@@ -5518,6 +5549,16 @@ impl AppView {
                                     compact,
                                 );
                             }
+                            if let Some(modal) = self.custom_provider_modal.as_mut() {
+                                let theme = crate::theme::Theme::current();
+                                crate::views::custom_provider_modal::render_custom_provider_modal(
+                                    f.buffer_mut(),
+                                    view_area,
+                                    modal,
+                                    &theme,
+                                    compact,
+                                );
+                            }
                             if let Some(tutorial) = self.tutorial.as_mut() {
                                 crate::views::tutorial::render_tutorial(
                                     f.buffer_mut(),
@@ -5536,6 +5577,7 @@ impl AppView {
                             let has_cloud = false;
                             if has_cloud
                                 || self.import_claude_modal.is_some()
+                                || self.custom_provider_modal.is_some()
                                 || self.tutorial.is_some()
                             {
                                 link_spans.clear();
@@ -5650,6 +5692,20 @@ impl AppView {
                                     settings,
                                     compact,
                                     None,
+                                );
+                            }
+                            // The Settings trigger row opens the wizard while the
+                            // dashboard surface is still showing, so it must be
+                            // painted here too: an invisible modal that owns every
+                            // keystroke would look like a freeze.
+                            if let Some(modal) = self.custom_provider_modal.as_mut() {
+                                let theme = crate::theme::Theme::current();
+                                crate::views::custom_provider_modal::render_custom_provider_modal(
+                                    f.buffer_mut(),
+                                    view_area,
+                                    modal,
+                                    &theme,
+                                    compact,
                                 );
                             }
                             let stale_clears =
@@ -5801,6 +5857,7 @@ impl AppView {
         let cloud_modal_open = false;
         matches!(self.active_view, ActiveView::Agent(id) if self.agents.get(&id).is_some_and(|a| a.extensions_modal.is_some() || a.active_modal.is_some()))
             || self.import_claude_modal.is_some()
+            || self.custom_provider_modal.is_some()
             || self.new_worktree_dialog.is_some()
             || self.welcome_doc_viewer.is_some()
             || self.tutorial.is_some()
@@ -6936,6 +6993,7 @@ pub(crate) mod tests {
             pending_screen_mode_switch: None,
             has_claude_import: false,
             import_claude_modal: None,
+            custom_provider_modal: None,
             welcome_doc_viewer: None,
             screen_mode: ScreenMode::Inline,
             pending_effects: Vec::new(),

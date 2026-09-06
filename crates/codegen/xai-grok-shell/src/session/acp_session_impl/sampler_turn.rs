@@ -652,6 +652,12 @@ impl SessionActor {
         tool_name: &str,
         provider: xai_grok_sampling_types::ModelProvider,
     ) -> bool {
+        if xai_grok_tools::implementations::codex::context_management::TOOL_NAMES
+            .contains(&tool_name)
+        {
+            let enabled = self.experimental_context_store().is_some();
+            return provider == xai_grok_sampling_types::ModelProvider::Codex && enabled;
+        }
         let web_search = self.rebuild_spec.web_search_state();
         if matches!(tool_name, "spawn_agent" | "interrupt_agent") {
             let sampling = self.rebuild_spec.active_sampling_config.read();
@@ -665,11 +671,7 @@ impl SessionActor {
             let sampling = self.rebuild_spec.active_sampling_config.read();
             return provider == xai_grok_sampling_types::ModelProvider::Codex
                 && self.rebuild_spec.subagent_depth == 0
-                && self
-                    .models_manager
-                    .model_experimental_supported_tools(&sampling.model)
-                    .iter()
-                    .any(|tool| tool == "send_user_message_async");
+                && sampling.supports_async_user_messages();
         }
         if tool_name == "web_search" {
             return web_search.allowed_for_provider(provider);
@@ -1058,10 +1060,16 @@ impl SessionActor {
             self.rebuild_spec.multi_agent_policy_enabled,
         );
         let reasoning_summary = self.models_manager.model_reasoning_summary(&cfg.model);
-        let use_responses_lite = self.models_manager.model_uses_responses_lite(&cfg.model);
-        let experimental_supported_tools = self
-            .models_manager
-            .model_experimental_supported_tools(&cfg.model);
+        let mut codex_model = self.models_manager.codex_model_metadata(&cfg.model);
+        codex_model.persistent_mode =
+            !self.startup_hints.is_subagent && self.models_manager.codex_persistent_mode();
+        // The active route preserves per-entry overrides even when an API alias
+        // shares its wire model slug with a different catalog entry. Re-resolving
+        // by cfg.model here would restore that other entry's Lite/tool flags.
+        // Model/settings switches replace this snapshot together with the agent.
+        let active_sampling = self.rebuild_spec.active_sampling_config();
+        let use_responses_lite = active_sampling.uses_responses_lite();
+        let experimental_supported_tools = active_sampling.experimental_supported_tools.clone();
         let stream_tool_calls = crate::agent::config::resolve_stream_tool_calls_inject(
             self.models_manager
                 .model_stream_tool_calls_override(&cfg.model)
@@ -1141,6 +1149,7 @@ impl SessionActor {
                 .active_sampling_config()
                 .supports_standalone_web_search,
             codex_multi_agent_v2,
+            codex_model,
             use_responses_lite,
             experimental_supported_tools,
             codex_permissions,

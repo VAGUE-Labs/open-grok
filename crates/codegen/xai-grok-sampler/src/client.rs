@@ -591,9 +591,53 @@ fn normalize_x_search_call(item: &mut serde_json::Value) {
     item.insert("input".to_owned(), serde_json::Value::String(input));
 }
 
+#[cfg(test)]
+#[test]
+fn codex_persistent_requires_runtime_opt_in_and_actual_async_tool() {
+    let mut metadata = xai_grok_sampling_types::CodexModelMetadata::default();
+    let tools = serde_json::json!({"tools":[{"type":"function","name":"send_user_message_async"}]});
+    assert!(codex_persistent_instructions(&tools, &metadata).is_none());
+    metadata.persistent_mode = true;
+    assert!(codex_persistent_instructions(&serde_json::json!({"tools":[]}), &metadata).is_none());
+    assert!(codex_persistent_instructions(&tools, &metadata).is_some());
+    metadata.model_messages.persistent_instructions =
+        Some("Ask{{ approval_request_channel }}".into());
+    assert_eq!(
+        codex_persistent_instructions(&tools, &metadata).as_deref(),
+        Some("Ask via functions.send_user_message_async")
+    );
+}
+
+fn codex_persistent_instructions(
+    body: &serde_json::Value,
+    metadata: &xai_grok_sampling_types::CodexModelMetadata,
+) -> Option<String> {
+    let async_tool_available = body
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|tools| {
+            tools.iter().any(|tool| {
+                tool.get("name")
+                    .or_else(|| tool.get("function").and_then(|f| f.get("name")))
+                    .and_then(serde_json::Value::as_str)
+                    == Some("send_user_message_async")
+            })
+        });
+    if !metadata.persistent_mode || !async_tool_available {
+        return None;
+    }
+    let instructions = metadata.model_messages.persistent_instructions.as_deref().unwrap_or(
+        "Persistent work is active. Fulfill the user's request and continue useful, authorized follow-ups until its completion or stopping condition is reached. Use send_user_message_async for progress while work remains. Keep required unanswered questions pending, respect cancellation, and never expand the user's authorization. Send a final answer when no relevant follow-up remains."
+    );
+    Some(instructions.replace(
+        "{{ approval_request_channel }}",
+        " via functions.send_user_message_async",
+    ))
+}
+
 /// Apply Codex-only fields that async-openai 0.33.1 cannot represent.
 ///
-/// Max and Ultra are distinct local choices, but Codex accepts `max` for both.
+/// Max and Ultra remain distinct; Ultra uses a validated catalog effort.
 /// On live Codex v2 models, Ultra opts into proactive multi-agent delegation.
 /// The policy item exists only in this request body and is never persisted to chat.
 #[cfg(test)]
@@ -1281,6 +1325,7 @@ struct ClientDefaults {
     stream_tool_calls: bool,
     idle_timeout_secs: Option<u64>,
     codex_multi_agent_v2: bool,
+    codex_model: xai_grok_sampling_types::CodexModelMetadata,
     use_responses_lite: bool,
     codex_permissions: Option<crate::config::CodexPermissions>,
     reasoning_effort: Option<xai_grok_sampling_types::ReasoningEffort>,
@@ -1500,6 +1545,17 @@ impl SamplingClient {
                     })?;
                     headers.insert(HeaderName::from_static("x-api-key"), header_value);
                 }
+                AuthScheme::XGoogApiKey => {
+                    let header_value = HeaderValue::from_str(api_key).map_err(|_| {
+                        tracing::debug!(
+                            "Invalid api_key: cannot be converted to a valid HTTP header"
+                        );
+                        SamplingError::auth_unknown(
+                            "Invalid api_key: cannot be converted to a valid HTTP header",
+                        )
+                    })?;
+                    headers.insert(HeaderName::from_static("x-goog-api-key"), header_value);
+                }
                 AuthScheme::Bearer => {
                     let bearer = format!("Bearer {}", api_key);
                     let header_value = HeaderValue::from_str(&bearer).map_err(|_| {
@@ -1596,6 +1652,7 @@ impl SamplingClient {
             stream_tool_calls: config.stream_tool_calls,
             idle_timeout_secs: config.idle_timeout_secs,
             codex_multi_agent_v2: config.codex_multi_agent_v2,
+            codex_model: config.codex_model,
             use_responses_lite,
             codex_permissions: config.codex_permissions,
             reasoning_effort: config.reasoning_effort,
@@ -1673,12 +1730,18 @@ impl SamplingClient {
             if resolved.is_some() || resolver.fail_closed_on_missing() {
                 headers.remove(AUTHORIZATION);
                 headers.remove(HeaderName::from_static("x-api-key"));
+                headers.remove(HeaderName::from_static("x-goog-api-key"));
             }
             if let Some(resolved) = resolved {
                 match self.defaults.auth_scheme {
                     AuthScheme::XApiKey => {
                         if let Ok(value) = HeaderValue::from_str(&resolved.bearer) {
                             headers.insert(HeaderName::from_static("x-api-key"), value);
+                        }
+                    }
+                    AuthScheme::XGoogApiKey => {
+                        if let Ok(value) = HeaderValue::from_str(&resolved.bearer) {
+                            headers.insert(HeaderName::from_static("x-goog-api-key"), value);
                         }
                     }
                     AuthScheme::Bearer => {
@@ -1718,6 +1781,7 @@ impl SamplingClient {
             has_bearer_resolver = self.bearer_resolver.is_some(),
             has_authorization_header = headers.get(AUTHORIZATION).is_some(),
             has_x_api_key_header = headers.get(HeaderName::from_static("x-api-key")).is_some(),
+            has_x_goog_api_key_header = headers.get(HeaderName::from_static("x-goog-api-key")).is_some(),
         );
         let sent_bearer = Self::sent_fragment_from_headers(&headers, &self.defaults.auth_scheme);
         if let Some(injector) = &self.header_injector {
@@ -1737,12 +1801,15 @@ impl SamplingClient {
     }
 
     /// Tail fragment of the credential in `headers` — `x-api-key`
-    /// (Messages-API scheme) or `Authorization` — per
+    /// (Messages-API scheme), `x-goog-api-key` (Google AI Studio), or `Authorization` — per
     /// [`crate::attribution::BEARER_SUFFIX_LEN`].
     fn sent_fragment_from_headers(headers: &HeaderMap, scheme: &AuthScheme) -> Option<String> {
         let raw = match scheme {
             AuthScheme::XApiKey => headers
                 .get(HeaderName::from_static("x-api-key"))
+                .and_then(|v| v.to_str().ok()),
+            AuthScheme::XGoogApiKey => headers
+                .get(HeaderName::from_static("x-goog-api-key"))
                 .and_then(|v| v.to_str().ok()),
             AuthScheme::Bearer => headers
                 .get(AUTHORIZATION)
@@ -1800,6 +1867,7 @@ impl SamplingClient {
         let auth_prefix = self.current_sent_bearer_suffix();
         let auth_type = match (&self.defaults.auth_scheme, &auth_prefix) {
             (AuthScheme::XApiKey, Some(_)) => "x-api-key",
+            (AuthScheme::XGoogApiKey, Some(_)) => "x-goog-api-key",
             (AuthScheme::Bearer, Some(_)) => "bearer",
             (_, None) => "none",
         };
@@ -1844,6 +1912,25 @@ impl SamplingClient {
 
     fn endpoint(&self, path: &str) -> String {
         self.endpoint.url_for_path(path)
+    }
+
+    fn google_ai_studio_endpoint(&self, model: &str, stream: bool) -> String {
+        let action = if stream {
+            ":streamGenerateContent?alt=sse"
+        } else {
+            ":generateContent"
+        };
+        let base = self.base_url.trim_end_matches('/');
+        let base = base
+            .strip_suffix("/openai")
+            .unwrap_or(base)
+            .trim_end_matches('/');
+        let model_path = if model.starts_with("models/") {
+            format!("{model}{action}")
+        } else {
+            format!("models/{model}{action}")
+        };
+        format!("{base}/{model_path}")
     }
 
     async fn acquire_provider_request_permit(&self) -> Option<OwnedSemaphorePermit> {
@@ -1955,6 +2042,16 @@ impl SamplingClient {
             .then_some(self.defaults.reasoning_effort)
             .flatten()
             .map(|default| request.reasoning_effort.unwrap_or(default));
+        // These fields are OpenRouter's wire projection, not shared reasoning
+        // defaults. Clear them even on a reused or directly supplied request
+        // before any other provider sees the body. Model names and URLs do
+        // not grant gateway-specific wire capabilities.
+        if self.defaults.provider != ModelProvider::OpenRouter {
+            request.reasoning = None;
+            for message in &mut request.messages {
+                message.reasoning = None;
+            }
+        }
         self.provider_adapter.sanitize_chat_request(&mut request);
         if let Some(reasoning_effort) = fireworks_reasoning_effort {
             request.reasoning_effort = Some(reasoning_effort);
@@ -2317,6 +2414,19 @@ impl SamplingClient {
             &mut request_body,
             ResponsesRequestPolicy {
                 multi_agent_v2: self.defaults.codex_multi_agent_v2,
+                ultra_effort: (!self
+                    .defaults
+                    .codex_model
+                    .supported_reasoning_efforts
+                    .is_empty())
+                .then(|| self.defaults.codex_model.ultra_effort()),
+                verbosity: self
+                    .defaults
+                    .codex_model
+                    .support_verbosity
+                    .then(|| self.defaults.codex_model.default_verbosity.clone())
+                    .flatten(),
+                persistent_instructions: None,
                 use_responses_lite: self.defaults.use_responses_lite,
                 local_effort: local_reasoning_effort,
                 reasoning_summary: self.defaults.reasoning_summary,
@@ -2727,10 +2837,25 @@ impl SamplingClient {
             &request.original_detail_custom_output_images,
         );
         patch_raw_input_replacements(&mut request_body, &request.raw_input_replacements)?;
+        let persistent_instructions =
+            codex_persistent_instructions(&request_body, &self.defaults.codex_model);
         self.provider_adapter.patch_responses_request(
             &mut request_body,
             ResponsesRequestPolicy {
                 multi_agent_v2: self.defaults.codex_multi_agent_v2,
+                ultra_effort: (!self
+                    .defaults
+                    .codex_model
+                    .supported_reasoning_efforts
+                    .is_empty())
+                .then(|| self.defaults.codex_model.ultra_effort()),
+                verbosity: self
+                    .defaults
+                    .codex_model
+                    .support_verbosity
+                    .then(|| self.defaults.codex_model.default_verbosity.clone())
+                    .flatten(),
+                persistent_instructions,
                 use_responses_lite: self.defaults.use_responses_lite,
                 local_effort: request.local_reasoning_effort,
                 reasoning_summary: self.defaults.reasoning_summary,
@@ -2917,10 +3042,25 @@ impl SamplingClient {
             &request.original_detail_custom_output_images,
         );
         patch_raw_input_replacements(&mut request_body, &request.raw_input_replacements)?;
+        let persistent_instructions =
+            codex_persistent_instructions(&request_body, &self.defaults.codex_model);
         self.provider_adapter.patch_responses_request(
             &mut request_body,
             ResponsesRequestPolicy {
                 multi_agent_v2: self.defaults.codex_multi_agent_v2,
+                ultra_effort: (!self
+                    .defaults
+                    .codex_model
+                    .supported_reasoning_efforts
+                    .is_empty())
+                .then(|| self.defaults.codex_model.ultra_effort()),
+                verbosity: self
+                    .defaults
+                    .codex_model
+                    .support_verbosity
+                    .then(|| self.defaults.codex_model.default_verbosity.clone())
+                    .flatten(),
+                persistent_instructions,
                 use_responses_lite: self.defaults.use_responses_lite,
                 local_effort: request.local_reasoning_effort,
                 reasoning_summary: self.defaults.reasoning_summary,
@@ -3442,6 +3582,153 @@ impl SamplingClient {
         Ok((events, model_metadata))
     }
 
+    pub async fn create_google_ai_studio_stream(
+        &self,
+        request: ConversationRequest,
+    ) -> Result<(
+        BoxStream<
+            'static,
+            Result<xai_grok_sampling_types::google_ai_studio::GenerateContentResponse>,
+        >,
+        Option<ResponseModelMetadata>,
+    )> {
+        let model = request
+            .model
+            .clone()
+            .unwrap_or_else(|| self.defaults.model.clone());
+        let url = self.google_ai_studio_endpoint(&model, true);
+        let wire_req =
+            xai_grok_sampling_types::conversation::build_google_ai_studio_request(&request);
+
+        let SentRequest {
+            builder,
+            sent_bearer,
+        } = self.post(&url);
+
+        let http_request = builder
+            .header(ACCEPT, HeaderValue::from_static("text/event-stream"))
+            .json(&wire_req);
+
+        let built_request = http_request.build().map_err(|e| {
+            tracing::error!("Failed to build HTTP request: {}", e);
+            SamplingError::Http(e)
+        })?;
+
+        tracing::debug!(
+            url = %built_request.url(),
+            method = %built_request.method(),
+            "Sending Google AI Studio stream request"
+        );
+        Self::log_request_headers(&built_request, "google_ai_studio");
+
+        let response = self.http.execute(built_request).await.map_err(|e| {
+            tracing::debug!("HTTP request failed: {}", e);
+            record_stream_request_failure(&e);
+            e
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                self.record_401_attribution(
+                    crate::attribution::SamplingConsumer::GoogleAiStudioStream,
+                    sent_bearer.as_deref(),
+                );
+                let body = response.bytes().await.unwrap_or_default();
+                let server_message = user_facing_api_error_message(status, body.as_ref());
+                return Err(auth_rejected(
+                    format!("Unauthorized (401) from {url}: {server_message}"),
+                    sent_bearer.as_deref(),
+                ));
+            }
+            let model_metadata = extract_model_metadata(response.headers());
+            let retry_after_secs = extract_retry_after(response.headers());
+            let should_retry = extract_should_retry(response.headers());
+            let bytes = response.bytes().await?;
+            let message = user_facing_api_error_message(status, bytes.as_ref());
+            tracing::error!(
+                status = %status,
+                error_message = %message,
+                body_preview = %Self::body_preview(bytes.as_ref()),
+                model_id = %model,
+                "Google AI Studio API error"
+            );
+            return Err(SamplingError::Api {
+                status,
+                message,
+                model_metadata,
+                retry_after_secs,
+                should_retry,
+                error_code: parse_error_code(bytes.as_ref()),
+            });
+        }
+
+        let model_metadata = extract_model_metadata(response.headers());
+
+        const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+        let mut is_first = true;
+        let byte_stream = response.bytes_stream().map(move |result| {
+            result.map(|bytes| {
+                if is_first {
+                    is_first = false;
+                    if bytes.starts_with(UTF8_BOM) {
+                        return bytes.slice(UTF8_BOM.len()..);
+                    }
+                }
+                bytes
+            })
+        });
+
+        let event_stream = byte_stream.eventsource();
+
+        let events = event_stream
+            .scan(false, |had_transport_error, event_res| {
+                if *had_transport_error {
+                    return std::future::ready(None);
+                }
+                let item = match event_res {
+                    Ok(event) => {
+                        let data = &event.data;
+                        if data == "[DONE]" {
+                            return std::future::ready(None);
+                        }
+
+                        tracing::info!(
+                            target: crate::sampling_log::TARGET,
+                            event = "sse_chunk",
+                            backend = "google_ai_studio",
+                            data = %data,
+                        );
+
+                        if let Some(stream_error) = try_parse_stream_error(data) {
+                            Some(Err(stream_error))
+                        } else {
+                            Some(
+                                serde_json::from_str::<xai_grok_sampling_types::google_ai_studio::GenerateContentResponse>(data).map_err(
+                                    |e| {
+                                        tracing::error!(
+                                            error = %e,
+                                            raw_data = %data,
+                                            "Failed to deserialize GenerateContentResponse from stream"
+                                        );
+                                        SamplingError::Serialization(e)
+                                    },
+                                ),
+                            )
+                        }
+                    }
+                    Err(e) => {
+                        *had_transport_error = true;
+                        Some(Err(SamplingError::EventStreamError(e.to_string())))
+                    }
+                };
+                std::future::ready(item)
+            })
+            .boxed();
+
+        Ok((events, model_metadata))
+    }
+
     // =========================================================================
     // Unified Conversation API
     // =========================================================================
@@ -3756,6 +4043,22 @@ impl SamplingClient {
         self.create_message_stream(wrapper).await
     }
 
+    /// Send a conversation request using the Google AI Studio API (streaming).
+    pub async fn conversation_stream_google_ai_studio(
+        &self,
+        mut request: ConversationRequest,
+    ) -> Result<(
+        BoxStream<
+            'static,
+            Result<xai_grok_sampling_types::google_ai_studio::GenerateContentResponse>,
+        >,
+        Option<ResponseModelMetadata>,
+    )> {
+        self.apply_conversation_defaults(&mut request)?;
+        self.project_function_backend_conversation(&mut request)?;
+        self.create_google_ai_studio_stream(request).await
+    }
+
     /// Send a conversation request using the Anthropic Messages API (non-streaming).
     ///
     /// Converts the `ConversationRequest` to Messages API format internally.
@@ -3832,6 +4135,12 @@ impl SamplingClient {
             ApiBackend::Messages => {
                 let (raw, meta) = self.conversation_stream_messages(request).await?;
                 let events = crate::stream::stream_messages(raw, meta, request_id, idle_timeout);
+                crate::stream::collect_response(events).await
+            }
+            ApiBackend::GoogleAiStudio => {
+                let (raw, meta) = self.conversation_stream_google_ai_studio(request).await?;
+                let events =
+                    crate::stream::stream_google_ai_studio(raw, meta, request_id, idle_timeout);
                 crate::stream::collect_response(events).await
             }
         };
@@ -4175,6 +4484,7 @@ mod tests {
             supports_backend_search: false,
             supports_standalone_web_search: false,
             codex_multi_agent_v2: false,
+            codex_model: Default::default(),
             use_responses_lite: false,
             experimental_supported_tools: Vec::new(),
             codex_permissions: None,
@@ -4544,6 +4854,7 @@ mod tests {
             search_parameters: None,
             response_format: None,
             reasoning_effort: None,
+            reasoning: None,
             thinking: None,
             service_tier: None,
             x_grok_conv_id: None,
@@ -4740,6 +5051,58 @@ mod tests {
             .apply_defaults(unsupported_input)
             .expect("unsupported Fireworks defaults");
         assert_eq!(unsupported_request.reasoning_effort, None);
+    }
+
+    #[test]
+    fn openrouter_reasoning_wire_fields_are_provider_scoped() {
+        use xai_grok_sampling_types::ChatReasoningConfig;
+
+        for provider in [
+            ModelProvider::Xai,
+            ModelProvider::Kimi,
+            ModelProvider::Fireworks,
+            ModelProvider::DeepSeek,
+            ModelProvider::OpenCodeGo,
+            ModelProvider::Wafer,
+            ModelProvider::Zai,
+            ModelProvider::Runinfra,
+            ModelProvider::Gemini,
+            ModelProvider::OpenRouter,
+            ModelProvider::Custom,
+        ] {
+            let mut config = minimal_config();
+            config.provider = provider;
+            // Identical gateway-looking metadata must not determine policy.
+            config.model = "anthropic/claude-sonnet-4".to_owned();
+            config.base_url = "https://openrouter.ai/api/v1".to_owned();
+            let client = SamplingClient::new(config).expect("Chat Completions client");
+            let mut assistant = ChatRequestMessage::assistant(
+                "answer",
+                "anthropic/claude-sonnet-4",
+                Some("portable thoughts".to_owned()),
+            );
+            assistant.reasoning = Some("gateway thoughts".to_owned());
+            let mut request =
+                ChatCompletionRequest::new("anthropic/claude-sonnet-4", vec![assistant]);
+            request.reasoning = Some(ChatReasoningConfig::effort(ReasoningEffort::High));
+            let request = client.apply_defaults(request).expect("provider defaults");
+            let wire = serde_json::to_value(request).expect("serializes");
+            if provider == ModelProvider::OpenRouter {
+                assert_eq!(wire["reasoning"]["effort"], "high");
+                assert_eq!(wire["messages"][0]["reasoning"], "gateway thoughts");
+                assert!(wire["messages"][0].get("reasoning_content").is_none());
+            } else {
+                assert!(wire.get("reasoning").is_none(), "{provider:?}");
+                assert!(
+                    wire["messages"][0].get("reasoning").is_none(),
+                    "{provider:?}"
+                );
+                assert_eq!(
+                    wire["messages"][0]["reasoning_content"], "portable thoughts",
+                    "{provider:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -6861,5 +7224,52 @@ mod tests {
             event,
             rs::ResponseStreamEvent::ResponseOutputTextDelta(_)
         ));
+    }
+
+    #[test]
+    fn google_ai_studio_endpoint_formatting() {
+        let mut cfg = minimal_config();
+        cfg.provider = ModelProvider::Gemini;
+        cfg.api_backend = ApiBackend::GoogleAiStudio;
+        cfg.auth_scheme = AuthScheme::XGoogApiKey;
+        cfg.base_url = "https://generativelanguage.googleapis.com/v1beta/openai".to_string();
+        let client = SamplingClient::new(cfg).unwrap();
+
+        assert_eq!(
+            client.google_ai_studio_endpoint("gemini-2.5-flash", true),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+        assert_eq!(
+            client.google_ai_studio_endpoint("gemini-2.5-flash", false),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+        );
+        assert_eq!(
+            client.google_ai_studio_endpoint("models/gemini-2.5-pro", true),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse"
+        );
+    }
+
+    #[test]
+    fn google_ai_studio_auth_scheme_and_header() {
+        let mut cfg = minimal_config();
+        cfg.provider = ModelProvider::Gemini;
+        cfg.api_backend = ApiBackend::GoogleAiStudio;
+        cfg.auth_scheme = AuthScheme::XGoogApiKey;
+        cfg.api_key = Some("test-goog-key-123".to_string());
+        cfg.base_url = "https://generativelanguage.googleapis.com/v1beta".to_string();
+        let client = SamplingClient::new(cfg).unwrap();
+
+        let req = client.post("https://generativelanguage.googleapis.com/v1beta/test");
+        let built = req.builder.build().unwrap();
+        assert_eq!(
+            built.headers().get("x-goog-api-key").unwrap(),
+            "test-goog-key-123"
+        );
+        assert!(
+            built
+                .headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .is_none()
+        );
     }
 }

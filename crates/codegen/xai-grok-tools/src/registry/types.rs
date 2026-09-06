@@ -696,6 +696,11 @@ impl ToolRegistryBuilder {
         b.register::<grok_build::TodoWriteTool>();
         b.register::<grok_build::UpdateGoalTool>();
         b.register::<grok_build::WorkflowTool>();
+        b.register::<grok_build::ProposeMissionTool>();
+        b.register::<grok_build::StartMissionRunTool>();
+        b.register::<grok_build::DismissHandoffItemsTool>();
+        b.register::<grok_build::InspectMissionReadinessTool>();
+        b.register::<grok_build::EndFeatureRunTool>();
         b.register::<grok_build::TaskOutputTool>();
         b.register::<grok_build::GetTerminalCommandOutputTool>();
         b.register::<grok_build::WaitTasksTool>();
@@ -740,6 +745,17 @@ impl ToolRegistryBuilder {
         b.register::<codex::grep_files::CodexGrepFilesTool>();
         b.register::<codex::read_file::CodexReadFileTool>();
         b.register::<codex::SendUserMessageAsyncTool>();
+        b.register::<codex::context_management::NewContextTool>();
+        b.register::<codex::context_management::GetContextRemainingTool>();
+        b.register::<codex::context_management::HistoryListWindowsTool>();
+        b.register::<codex::context_management::HistoryListItemsTool>();
+        b.register::<codex::context_management::HistoryReadItemTool>();
+        b.register::<codex::context_management::HistorySearchContentsTool>();
+        b.register::<codex::context_management::NotesListFilesTool>();
+        b.register::<codex::context_management::NotesReadFileTool>();
+        b.register::<codex::context_management::NotesSearchTool>();
+        b.register::<codex::context_management::NotesAppendTool>();
+        b.register::<codex::context_management::NotesWriteTool>();
         b.register::<opencode::OpenCodeBashTool>();
         b.register::<opencode::OpenCodeReadTool>();
         b.register::<opencode::OpenCodeEditTool>();
@@ -1553,6 +1569,9 @@ impl FinalizedToolset {
             remap_json_keys(tool_args, &reverse_params)
         };
         let mut ctx = xai_tool_runtime::ToolCallContext::new(parent_ctx.call_id.clone());
+        if let Some(metadata) = parent_ctx.get::<xai_tool_runtime::McpCallMetadata>() {
+            ctx.extensions.insert((*metadata).clone());
+        }
         ctx.extensions.insert(self.resources.clone());
         ctx.extensions.insert_arc(Arc::clone(&self.renderer));
         if let Some(cancellation) = parent_ctx.get::<xai_tool_runtime::Cancellation>() {
@@ -1675,6 +1694,30 @@ impl FinalizedToolset {
         cancellation: Option<tokio_util::sync::CancellationToken>,
         viewer_ctx: Option<xai_tool_runtime::WorkspaceViewerContext>,
     ) -> xai_tool_runtime::ToolStream<ToolRunResult> {
+        let mut extensions = xai_tool_runtime::TypedExtensions::new();
+        if let Some(viewer_ctx) = viewer_ctx {
+            extensions.insert(viewer_ctx);
+        }
+        self.call_streaming_with_extensions(
+            tool_name,
+            tool_args,
+            tool_call_id,
+            cwd_override,
+            cancellation,
+            extensions,
+        )
+    }
+
+    /// Per-call host extensions survive nested dispatch without mutating shared resources.
+    pub fn call_streaming_with_extensions(
+        self: &Arc<Self>,
+        tool_name: &str,
+        tool_args: serde_json::Value,
+        tool_call_id: &str,
+        cwd_override: Option<std::path::PathBuf>,
+        cancellation: Option<tokio_util::sync::CancellationToken>,
+        extensions: xai_tool_runtime::TypedExtensions,
+    ) -> xai_tool_runtime::ToolStream<ToolRunResult> {
         use futures::StreamExt;
         let this = Arc::clone(self);
         let tool_name = tool_name.to_owned();
@@ -1700,9 +1743,9 @@ impl FinalizedToolset {
                 output_converter,
                 effective_tool_name,
             } = parts;
-            if let Some(viewer_ctx) = viewer_ctx {
-                ctx.extensions.insert(viewer_ctx);
-            }
+            let mut call_extensions = extensions;
+            call_extensions.merge_defaults(&ctx.extensions);
+            ctx.extensions = call_extensions;
 
             let mut inner = lr_handle.execute(ctx, canonical_params).await;
             while let Some(item) = inner.next().await {

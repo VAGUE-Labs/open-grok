@@ -87,6 +87,10 @@ pub struct ChatCompletionRequest {
     pub response_format: Option<crate::rs::ResponseFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
+    /// OpenRouter nested reasoning control. Mutually exclusive with
+    /// top-level `reasoning_effort` on that gateway.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ChatReasoningConfig>,
     /// Z AI GLM "thinking mode" switch; unset for every other provider.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<ChatThinkingMode>,
@@ -134,6 +138,7 @@ impl ChatCompletionRequest {
             search_parameters: None,
             response_format: None,
             reasoning_effort: None,
+            reasoning: None,
             thinking: None,
             service_tier: None,
             x_grok_conv_id: None,
@@ -210,6 +215,10 @@ pub struct ChatRequestMessage {
     /// The reasoning/thinking content from the model (for models that support extended thinking)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
+    /// OpenRouter's assistant-message thinking field. Unset for other
+    /// Chat Completions providers, which keep `reasoning_content`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
 }
 
 impl ChatRequestMessage {
@@ -222,6 +231,7 @@ impl ChatRequestMessage {
             tool_call_id: None,
             model_id: None,
             reasoning_content: None,
+            reasoning: None,
         }
     }
 
@@ -234,6 +244,7 @@ impl ChatRequestMessage {
             tool_call_id: None,
             model_id: None,
             reasoning_content: None,
+            reasoning: None,
         }
     }
 
@@ -250,6 +261,7 @@ impl ChatRequestMessage {
             tool_call_id: None,
             model_id: Some(model_id.into()),
             reasoning_content,
+            reasoning: None,
         }
     }
 
@@ -262,6 +274,7 @@ impl ChatRequestMessage {
             tool_call_id: Some(tool_call_id.into()),
             model_id: None,
             reasoning_content: None,
+            reasoning: None,
         }
     }
 
@@ -392,6 +405,7 @@ pub enum FinishReason {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(from = "ChatResponseMessageWire")]
 pub struct ChatResponseMessage {
     pub role: Role,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -404,6 +418,38 @@ pub struct ChatResponseMessage {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub citations: Option<Vec<String>>,
+}
+
+// Gateways can emit both names, including `reasoning_content: null` beside
+// `reasoning`. A serde alias treats that as a duplicate field and rejects the
+// entire response. Decode independently and apply the same nonempty-field
+// precedence used by ChatChunkDelta::reasoning_text.
+#[derive(Deserialize)]
+struct ChatResponseMessageWire {
+    role: Role,
+    content: Option<String>,
+    reasoning_content: Option<String>,
+    reasoning: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<ToolCallResponse>,
+    tool_call_id: Option<String>,
+    citations: Option<Vec<String>>,
+}
+
+impl From<ChatResponseMessageWire> for ChatResponseMessage {
+    fn from(message: ChatResponseMessageWire) -> Self {
+        Self {
+            role: message.role,
+            content: message.content,
+            reasoning_content: message
+                .reasoning_content
+                .filter(|text| !text.is_empty())
+                .or(message.reasoning),
+            tool_calls: message.tool_calls,
+            tool_call_id: message.tool_call_id,
+            citations: message.citations,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -538,6 +584,9 @@ pub struct ChatChunkDelta {
     pub role: Option<Role>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// DeepSeek/Kimi thinking tokens. Kept separate from OpenRouter's
+    /// `reasoning` so responses containing both fields remain valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
     /// OpenRouter's normalized reasoning delta field. OpenRouter streams
     /// thinking text as `delta.reasoning` (a plain string); `reasoning_content`
@@ -737,6 +786,25 @@ pub enum ReasoningEffort {
     Xhigh,
     Max,
     Ultra,
+}
+
+/// OpenRouter nested reasoning control (`reasoning.effort` body parameter).
+///
+/// OpenRouter rejects a request that sends both this object and a differing
+/// top-level `reasoning_effort`, so the OpenRouter adapter copies effort
+/// here and clears the shorthand.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ChatReasoningConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<ReasoningEffort>,
+}
+
+impl ChatReasoningConfig {
+    pub fn effort(effort: ReasoningEffort) -> Self {
+        Self {
+            effort: Some(effort),
+        }
+    }
 }
 
 /// Z AI GLM "thinking mode" selector (`thinking.type` body parameter).
@@ -1176,6 +1244,9 @@ pub enum ApiBackend {
     Responses,
     /// Use the Anthropic Messages API (/v1/messages)
     Messages,
+    /// Use Google's AI Studio API (models/{model}:generateContent and :streamGenerateContent)
+    #[serde(alias = "ai_studio", alias = "gemini", alias = "google")]
+    GoogleAiStudio,
 }
 
 /// First-party provider contract selected by a model catalog entry.
@@ -1278,6 +1349,8 @@ pub struct ProviderBackends {
     pub chat_completions: bool,
     pub responses: Option<ResponsesDialect>,
     pub messages: bool,
+    #[serde(default)]
+    pub google_ai_studio: bool,
 }
 
 impl ProviderBackends {
@@ -1286,6 +1359,7 @@ impl ProviderBackends {
             ApiBackend::ChatCompletions => self.chat_completions,
             ApiBackend::Responses => self.responses.is_some(),
             ApiBackend::Messages => self.messages,
+            ApiBackend::GoogleAiStudio => self.google_ai_studio,
         }
     }
 }
@@ -1401,6 +1475,7 @@ impl ProviderProfile {
             chat_completions: true,
             responses: Some(ResponsesDialect::Xai),
             messages: true,
+            google_ai_studio: false,
         },
         code_mode_transport: CodeModeTransport::FunctionEnvelope,
         hosted_tool_dialect: Some(HostedToolDialect::Xai),
@@ -1416,6 +1491,7 @@ impl ProviderProfile {
             chat_completions: false,
             responses: Some(ResponsesDialect::Codex),
             messages: false,
+            google_ai_studio: false,
         },
         code_mode_transport: CodeModeTransport::NativeCustomGrammar,
         hosted_tool_dialect: Some(HostedToolDialect::OpenAi),
@@ -1434,6 +1510,7 @@ impl ProviderProfile {
             chat_completions: true,
             responses: None,
             messages: false,
+            google_ai_studio: false,
         },
         code_mode_transport: CodeModeTransport::Unsupported,
         hosted_tool_dialect: None,
@@ -1453,6 +1530,7 @@ impl ProviderProfile {
             chat_completions: true,
             responses: None,
             messages: false,
+            google_ai_studio: false,
         },
         code_mode_transport: CodeModeTransport::Unsupported,
         hosted_tool_dialect: None,
@@ -1472,6 +1550,7 @@ impl ProviderProfile {
             chat_completions: true,
             responses: Some(ResponsesDialect::DeepSeek),
             messages: false,
+            google_ai_studio: false,
         },
         code_mode_transport: CodeModeTransport::FunctionEnvelope,
         hosted_tool_dialect: Some(HostedToolDialect::OpenAi),
@@ -1490,6 +1569,7 @@ impl ProviderProfile {
             chat_completions: false,
             responses: Some(ResponsesDialect::Meta),
             messages: false,
+            google_ai_studio: false,
         },
         code_mode_transport: CodeModeTransport::FunctionEnvelope,
         hosted_tool_dialect: Some(HostedToolDialect::OpenAi),
@@ -1507,6 +1587,7 @@ impl ProviderProfile {
             chat_completions: true,
             responses: None,
             messages: true,
+            google_ai_studio: false,
         },
         code_mode_transport: CodeModeTransport::Unsupported,
         hosted_tool_dialect: None,
@@ -1525,6 +1606,7 @@ impl ProviderProfile {
             chat_completions: true,
             responses: None,
             messages: false,
+            google_ai_studio: false,
         },
         code_mode_transport: CodeModeTransport::Unsupported,
         hosted_tool_dialect: None,
@@ -1544,6 +1626,7 @@ impl ProviderProfile {
             chat_completions: true,
             responses: None,
             messages: false,
+            google_ai_studio: false,
         },
         code_mode_transport: CodeModeTransport::Unsupported,
         hosted_tool_dialect: None,
@@ -1564,6 +1647,7 @@ impl ProviderProfile {
             chat_completions: true,
             responses: None,
             messages: false,
+            google_ai_studio: false,
         },
         code_mode_transport: CodeModeTransport::Unsupported,
         hosted_tool_dialect: None,
@@ -1573,17 +1657,17 @@ impl ProviderProfile {
         xai_services: XaiServicePolicy::Denied,
     };
 
-    /// Google Gemini API / AI Studio OpenAI-compatible Chat Completions.
-    /// Gemini 3 models reason by default and accept ordinary client-side
-    /// function tools. This profile stays Chat-only: the official OpenAI
-    /// compatibility surface is `chat/completions`, not a first-class
-    /// Responses dialect. No hosted tools, native web search, or OAuth.
+    /// Google Gemini API / AI Studio OpenAI-compatible Chat Completions and
+    /// native Google AI Studio API. Gemini 3 models reason by default and
+    /// accept ordinary client-side function tools. No hosted tools, native
+    /// web search, or OAuth.
     pub const GEMINI: Self = Self {
         provider: ModelProvider::Gemini,
         backends: ProviderBackends {
             chat_completions: true,
             responses: None,
             messages: false,
+            google_ai_studio: true,
         },
         code_mode_transport: CodeModeTransport::Unsupported,
         hosted_tool_dialect: None,
@@ -1594,15 +1678,16 @@ impl ProviderProfile {
     };
 
     /// OpenRouter's OpenAI-compatible Chat Completions gateway. Models are
-    /// discovered live and enabled explicitly; the transport is Chat-only
-    /// with client function tools. No hosted tools, native web search, or
-    /// OAuth.
+    /// discovered live from `GET /models`, including per-model reasoning
+    /// efforts. The transport is Chat-only with client function tools. No
+    /// hosted tools, native web search, or OAuth.
     pub const OPENROUTER: Self = Self {
         provider: ModelProvider::OpenRouter,
         backends: ProviderBackends {
             chat_completions: true,
             responses: None,
             messages: false,
+            google_ai_studio: false,
         },
         code_mode_transport: CodeModeTransport::Unsupported,
         hosted_tool_dialect: None,
@@ -1625,6 +1710,7 @@ impl ProviderProfile {
             chat_completions: true,
             responses: Some(ResponsesDialect::OpenAi),
             messages: true,
+            google_ai_studio: true,
         },
         code_mode_transport: CodeModeTransport::Unsupported,
         hosted_tool_dialect: None,
@@ -2089,6 +2175,7 @@ mod tests {
                     chat_completions: true,
                     responses: Some(ResponsesDialect::Xai),
                     messages: true,
+                    google_ai_studio: false,
                 },
                 code_mode_transport: CodeModeTransport::FunctionEnvelope,
                 hosted_tools: Some(HostedToolDialect::Xai),
@@ -2105,6 +2192,7 @@ mod tests {
                     chat_completions: false,
                     responses: Some(ResponsesDialect::Codex),
                     messages: false,
+                    google_ai_studio: false,
                 },
                 code_mode_transport: CodeModeTransport::NativeCustomGrammar,
                 hosted_tools: Some(HostedToolDialect::OpenAi),
@@ -2121,6 +2209,7 @@ mod tests {
                     chat_completions: true,
                     responses: None,
                     messages: false,
+                    google_ai_studio: false,
                 },
                 code_mode_transport: CodeModeTransport::Unsupported,
                 hosted_tools: None,
@@ -2137,6 +2226,7 @@ mod tests {
                     chat_completions: true,
                     responses: None,
                     messages: false,
+                    google_ai_studio: false,
                 },
                 code_mode_transport: CodeModeTransport::Unsupported,
                 hosted_tools: None,
@@ -2153,6 +2243,7 @@ mod tests {
                     chat_completions: true,
                     responses: Some(ResponsesDialect::DeepSeek),
                     messages: false,
+                    google_ai_studio: false,
                 },
                 code_mode_transport: CodeModeTransport::FunctionEnvelope,
                 hosted_tools: Some(HostedToolDialect::OpenAi),
@@ -2169,6 +2260,7 @@ mod tests {
                     chat_completions: false,
                     responses: Some(ResponsesDialect::Meta),
                     messages: false,
+                    google_ai_studio: false,
                 },
                 code_mode_transport: CodeModeTransport::FunctionEnvelope,
                 hosted_tools: Some(HostedToolDialect::OpenAi),
@@ -2185,6 +2277,7 @@ mod tests {
                     chat_completions: true,
                     responses: None,
                     messages: true,
+                    google_ai_studio: false,
                 },
                 code_mode_transport: CodeModeTransport::Unsupported,
                 hosted_tools: None,
@@ -2201,6 +2294,7 @@ mod tests {
                     chat_completions: true,
                     responses: None,
                     messages: false,
+                    google_ai_studio: false,
                 },
                 code_mode_transport: CodeModeTransport::Unsupported,
                 hosted_tools: None,
@@ -2217,6 +2311,7 @@ mod tests {
                     chat_completions: true,
                     responses: None,
                     messages: false,
+                    google_ai_studio: false,
                 },
                 code_mode_transport: CodeModeTransport::Unsupported,
                 hosted_tools: None,
@@ -2233,6 +2328,7 @@ mod tests {
                     chat_completions: true,
                     responses: None,
                     messages: false,
+                    google_ai_studio: false,
                 },
                 code_mode_transport: CodeModeTransport::Unsupported,
                 hosted_tools: None,
@@ -2249,6 +2345,7 @@ mod tests {
                     chat_completions: true,
                     responses: None,
                     messages: false,
+                    google_ai_studio: true,
                 },
                 code_mode_transport: CodeModeTransport::Unsupported,
                 hosted_tools: None,
@@ -2265,6 +2362,7 @@ mod tests {
                     chat_completions: true,
                     responses: None,
                     messages: false,
+                    google_ai_studio: false,
                 },
                 code_mode_transport: CodeModeTransport::Unsupported,
                 hosted_tools: None,
@@ -2284,6 +2382,7 @@ mod tests {
                     chat_completions: true,
                     responses: Some(ResponsesDialect::OpenAi),
                     messages: true,
+                    google_ai_studio: true,
                 },
                 code_mode_transport: CodeModeTransport::Unsupported,
                 hosted_tools: None,
@@ -2324,6 +2423,7 @@ mod tests {
                 ApiBackend::ChatCompletions,
                 ApiBackend::Responses,
                 ApiBackend::Messages,
+                ApiBackend::GoogleAiStudio,
             ] {
                 assert_eq!(
                     profile.supports_backend(&backend),
@@ -2359,6 +2459,7 @@ mod tests {
                 ApiBackend::ChatCompletions,
                 ApiBackend::Responses,
                 ApiBackend::Messages,
+                ApiBackend::GoogleAiStudio,
             ] {
                 let supported = provider == ModelProvider::Xai && backend == ApiBackend::Responses;
                 assert_eq!(
@@ -2404,6 +2505,59 @@ mod tests {
             assert_eq!(back, v, "round-trip {v:?}");
         }
         assert!(serde_json::from_str::<ReasoningEffort>("\"BOGUS\"").is_err());
+    }
+
+    #[test]
+    fn openrouter_reasoning_fields_deserialize_without_alias_collisions() {
+        let delta: ChatChunkDelta = serde_json::from_value(json!({
+            "role": "assistant",
+            "reasoning": "gateway thoughts"
+        }))
+        .expect("OpenRouter delta.reasoning deserializes");
+        assert!(delta.reasoning_content.is_none());
+        assert_eq!(delta.reasoning.as_deref(), Some("gateway thoughts"));
+        assert_eq!(delta.reasoning_text(), "gateway thoughts");
+
+        let message: ChatResponseMessage = serde_json::from_value(json!({
+            "role": "assistant",
+            "content": "answer",
+            "reasoning": "non-stream thoughts",
+            "tool_calls": [{
+                "id": "call_lookup",
+                "type": "function",
+                "function": {"name": "lookup", "arguments": "{}"}
+            }],
+            "citations": ["https://example.test/reference"]
+        }))
+        .expect("OpenRouter message.reasoning deserializes");
+        assert_eq!(message.content.as_deref(), Some("answer"));
+        assert_eq!(
+            message.reasoning_content.as_deref(),
+            Some("non-stream thoughts")
+        );
+        assert_eq!(message.tool_calls[0].function.name, "lookup");
+        assert_eq!(
+            message.citations.as_ref().unwrap()[0],
+            "https://example.test/reference"
+        );
+
+        for (content, expected) in [
+            (Some("preferred thoughts"), "preferred thoughts"),
+            (Some(""), "gateway thoughts"),
+            (None, "gateway thoughts"),
+        ] {
+            let wire = json!({
+                "role": "assistant",
+                "reasoning_content": content,
+                "reasoning": "gateway thoughts"
+            });
+            let delta: ChatChunkDelta = serde_json::from_value(wire.clone())
+                .expect("both delta reasoning fields deserialize");
+            assert_eq!(delta.reasoning_text(), expected);
+            let message: ChatResponseMessage =
+                serde_json::from_value(wire).expect("both message reasoning fields deserialize");
+            assert_eq!(message.reasoning_content.as_deref(), Some(expected));
+        }
     }
 
     #[test]

@@ -324,6 +324,17 @@ pub(crate) fn persist_custom_model_upsert_to_root(
     record: &crate::custom_models::CustomModelRecord,
 ) -> Result<crate::agent::config::ConfigModelOverride> {
     upsert_config_model_table(root, &record.key, record.to_toml_table());
+    if let Some(table) = root
+        .get_mut("model")
+        .and_then(|section| section.get_mut(&record.key))
+        .and_then(TomlValue::as_table_mut)
+    {
+        if record.max_context_window.is_some() && record.context_window.is_none() {
+            table.remove("context_window");
+        } else if record.context_window.is_some() && record.max_context_window.is_none() {
+            table.remove("max_context_window");
+        }
+    }
     let table = root
         .get("model")
         .and_then(|section| section.get(&record.key))
@@ -377,6 +388,27 @@ pub(crate) fn persist_custom_model_delete_at(path: &std::path::Path, key: &str) 
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn codex_context_save_replaces_the_previous_override_coordinate() {
+        let mut root: toml::Value =
+            toml::from_str("[model.test]\ncontext_window = 200000\nname = 'keep me'\n").unwrap();
+        let mut record = crate::custom_models::CustomModelRecord {
+            key: "test".into(),
+            model: "catalog-model".into(),
+            provider: Some("codex".into()),
+            max_context_window: Some(1_000_000),
+            ..Default::default()
+        };
+        let parsed = super::persist_custom_model_upsert_to_root(&mut root, &record).unwrap();
+        assert_eq!(parsed.context_window, None);
+        assert_eq!(parsed.max_context_window, Some(1_000_000));
+        assert_eq!(parsed.name.as_deref(), Some("keep me"));
+        record.max_context_window = None;
+        record.context_window = Some(800_000);
+        let parsed = super::persist_custom_model_upsert_to_root(&mut root, &record).unwrap();
+        assert_eq!(parsed.context_window, Some(800_000));
+        assert_eq!(parsed.max_context_window, None);
+    }
     use super::super::load::load_config_from_toml;
     use super::super::mcp::{McpConfig, parse_mcp_config_with_oauth};
     use super::*;
@@ -1836,6 +1868,71 @@ model = "gone"
         );
     }
 
+    #[test]
+    fn custom_model_experimental_metadata_upserts_preserve_omissions_and_clear_explicitly() {
+        let mut root: TomlValue = toml::from_str(
+            r#"
+[model."openai:api-test-model"]
+model = "advertised-api-test-model"
+provider = "codex"
+api_backend = "responses"
+api_key = "test-api-secret"
+description = "keep this description"
+"#,
+        )
+        .unwrap();
+        let record = crate::custom_models::CustomModelRecord {
+            use_responses_lite: Some(true),
+            experimental_supported_tools: Some(vec!["send_user_message_async".into()]),
+            ..custom_record("openai:api-test-model", "advertised-api-test-model")
+        };
+        let enabled = persist_custom_model_upsert_to_root(&mut root, &record).unwrap();
+        assert_eq!(enabled.use_responses_lite, Some(true));
+        assert_eq!(
+            enabled.experimental_supported_tools,
+            Some(vec!["send_user_message_async".into()])
+        );
+
+        let rename = crate::custom_models::CustomModelRecord {
+            name: Some("Test API".into()),
+            ..custom_record("openai:api-test-model", "advertised-api-test-model")
+        };
+        let renamed = persist_custom_model_upsert_to_root(&mut root, &rename).unwrap();
+        assert_eq!(renamed.name.as_deref(), Some("Test API"));
+        assert_eq!(renamed.use_responses_lite, enabled.use_responses_lite);
+        assert_eq!(
+            renamed.experimental_supported_tools,
+            enabled.experimental_supported_tools
+        );
+
+        let disabled = crate::custom_models::CustomModelRecord {
+            use_responses_lite: Some(false),
+            experimental_supported_tools: Some(Vec::new()),
+            ..custom_record("openai:api-test-model", "advertised-api-test-model")
+        };
+        let disabled = persist_custom_model_upsert_to_root(&mut root, &disabled).unwrap();
+        let serialized = toml::to_string_pretty(&root).unwrap();
+        let reloaded =
+            crate::agent::config::Config::new_from_toml_cfg(&toml::from_str(&serialized).unwrap())
+                .unwrap();
+        let loaded = &reloaded.config_models["openai:api-test-model"];
+        assert_eq!(loaded.use_responses_lite, Some(false));
+        assert_eq!(loaded.experimental_supported_tools, Some(Vec::new()));
+        assert_eq!(loaded.name.as_deref(), Some("Test API"));
+        assert_eq!(loaded.description.as_deref(), Some("keep this description"));
+        let public = crate::custom_models::override_to_public("openai:api-test-model", loaded);
+        assert_eq!(
+            public,
+            crate::custom_models::override_to_public("openai:api-test-model", &disabled)
+        );
+        let json = serde_json::to_value(public).unwrap();
+        assert_eq!(json["use_responses_lite"], false);
+        assert_eq!(json["experimental_supported_tools"], serde_json::json!([]));
+        assert_eq!(json["has_api_key"], true);
+        assert!(json.get("api_key").is_none());
+        assert!(!json.to_string().contains("test-api-secret"));
+    }
+
     /// The wizard saves a whole endpoint at once: every row must land in one
     /// file write, keep unrelated config intact, and carry the credential
     /// header derived from the chosen wire format.
@@ -1917,6 +2014,10 @@ model = "gone"
         persist_custom_model_upserts_at(&path, std::slice::from_ref(&record)).unwrap();
         let written = std::fs::read_to_string(&path).unwrap();
         assert!(written.contains("auth_scheme = \"x_api_key\""), "{written}");
+        assert!(
+            written.contains("[model.\"gateway.example.com:claude-x\"]"),
+            "a dotted catalog key must land as one quoted table name: {written}"
+        );
         let parsed: TomlValue = toml::from_str(&written).unwrap();
         let entry: crate::agent::config::ConfigModelOverride = parsed
             .get("model")

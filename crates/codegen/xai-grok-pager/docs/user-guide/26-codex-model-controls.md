@@ -1,0 +1,129 @@
+# Codex context and persistent work
+
+Open Grok uses the Codex 0.153.1 model-catalog contract. GPT-6-astra appears by
+its public name. Live catalog entries control reasoning, tools, and service
+tiers. Ultra uses the model's advertised multi-agent effort; Max remains Max.
+Replacement and retirement notices appear in model descriptions without
+automatically switching your selected model.
+
+## Async messages on the OpenAI API
+
+When a Codex Responses model reports
+`experimental_supported_tools = ["send_user_message_async"]`, Open Grok lets the
+main agent send messages and questions while continuing its work. Replies arrive
+as new user messages. The tool is available with either ChatGPT login or an
+explicit API key, and is not exposed to subagents.
+
+For a public OpenAI Responses API model, configure an explicit route in
+`$OPENGROK_HOME/config.toml`:
+
+```toml
+[model.astra-api]
+model = "gpt-6-astra"
+provider = "codex"
+base_url = "https://api.openai.com/v1"
+api_backend = "responses"
+env_key = "OPENAI_API_KEY"
+supports_reasoning_effort = true
+reasoning_effort = "medium"
+use_responses_lite = false
+experimental_supported_tools = ["send_user_message_async"]
+```
+
+Select `astra-api` to use this route. Your existing API key must be available in
+`OPENAI_API_KEY`, and your API account must have access to the requested model.
+Use Responses for Astra tool calling, as described in the
+[OpenAI model guide](https://developers.openai.com/api/docs/guides/latest-model).
+
+These two capability fields are also accepted by the custom-model upsert API.
+Omitting either field preserves inherited metadata. Set
+`experimental_supported_tools = []` to disable the message tool; set
+`use_responses_lite = false` to use ordinary Responses instead of Codex Lite.
+The message tool acknowledges delivery immediately; it does not wait for a
+reply or enable the separate API protocol for deferred tool results.
+
+## Context overrides
+
+In **Settings → Models → Custom models**, use the model's existing catalog key
+to override it. For GPT-6-astra, use `gpt-6-astra` and provider `codex`.
+**Codex raw context override** accepts a budget above the catalog maximum.
+When it is nonzero, saving uses that raw budget instead of the usable-context
+field. Set it to zero to use the usable-context field.
+
+You can also edit `$OPENGROK_HOME/config.toml` (normally `~/.opengrok/config.toml`):
+
+```toml
+[model.gpt-6-astra]
+max_context_window = 1000000
+auto_compact_token_limit = 850000 # optional
+```
+
+`max_context_window` is the raw budget, including headroom. At 95% effective
+context, 1,000,000 raw tokens gives 950,000 usable tokens. Without an explicit
+compaction override, automatic compaction begins at 900,000 tokens.
+
+Existing `context_window` values mean usable tokens. If you set both fields,
+`context_window` takes precedence. An explicit `auto_compact_token_limit` is
+capped at 90% of the resolved raw budget; a custom compaction percentage keeps
+its existing precedence. Overrides change the client's accounting and
+compaction behavior; the inference server still enforces its actual limits.
+
+To restore catalog defaults, remove the model override fields or remove the
+custom entry in Settings. Model configuration changes refresh the catalog and
+rebind the session through the normal provider/settings path.
+
+## Experimental context management
+
+Enable **Settings → Advanced → Experimental context management**, then restart,
+or set:
+
+```toml
+[features.context_management]
+experimental_mode = true
+```
+
+Codex models can use `new_context` and `get_context_remaining`, along with local
+`history_*` and `notes_*` tools. A fresh window starts after the current tool
+batch finishes. Running commands, subagents, the Code Mode JavaScript session,
+and plan state remain intact. The first and latest human instructions and a
+bounded digest of notes carry forward; the model can recover other details
+from its earlier windows. Notes never become new user authorization.
+
+The usable context override controls the window budget. By default, up to
+16,384 tokens are reserved for recovery, with a reminder at 6,144 remaining
+tokens. An explicit `auto_compact_token_limit` can request an earlier boundary.
+An explicitly changed compaction percentage keeps its existing precedence.
+If the model consumes the reserve without starting a window, the host starts
+one. Ordinary compaction applies when this setting is off or the route is not
+Codex Responses.
+
+This is Open Grok's local adaptation: text history and notes live under the
+session's `context-management/` directory and survive resume. They use separate
+stores for each session/subagent, without Codex's private cloud history service
+or cross-agent history queries. Private tool calls are hidden from the UI.
+A failed history/checkpoint write prevents the active history from being
+replaced. Manual `/compact` also starts a fresh window while this mode is on.
+
+## Persistent work and browser review
+
+**Settings → Agent → Codex persistent work** keeps the root agent working on
+relevant authorized follow-ups and monitoring while it sends progress messages.
+It requires a model with async user messaging. Codex's persistent mode disables
+reasoning on the wire. Escape cancels normally; the mode does not expand your
+authorization or enable itself on subagents.
+
+**Codex browser action review** uses available model Guardian guidance to
+review `node_repl`/`cua_repl` browser and computer calls. Calls needing review
+use the normal permission prompt. If review is unavailable, permission is
+requested. Existing deny rules and sandbox restrictions remain in force.
+
+Both settings are off by default and require restarting Open Grok:
+
+```toml
+[ui]
+codex_persistent_mode = true
+codex_guardian_review = true
+```
+
+Browser/computer confirmation policies are supplied to compatible MCP servers
+per call and follow the active model. They do not change shell permissions.

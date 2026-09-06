@@ -550,6 +550,8 @@ pub enum Action {
     /// SHELL-owned: updates the process-wide cache mirror and persists to
     /// `[ui].stream_tool_calls` via `Effect::PersistSetting`.
     SetStreamToolCalls(bool),
+    SetCodexPersistentMode(bool),
+    SetCodexGuardianReview(bool),
     /// Set whether runs of consecutive non-destructive tool calls and
     /// subagent rows are grouped into one row. SHELL-owned: updates the
     /// process-wide cache mirror and persists to `[ui].group_tool_verbs`
@@ -728,6 +730,7 @@ pub enum Action {
     SetCustomModelProvider(String),
     SetCustomModelBaseUrl(String),
     SetCustomModelContextWindow(i64),
+    SetCustomModelMaxContextWindow(i64),
     SetCustomModelBackend(String),
     SetCustomModelEnvKey(String),
     SetCustomModelSave(bool),
@@ -735,6 +738,20 @@ pub enum Action {
         key: String,
     },
     RefreshCustomModels,
+    /// `/provider` (or Settings -> Models): open the custom-provider wizard.
+    OpenCustomProviderWizard,
+    /// Leave the wizard without writing anything (Esc, or the final Enter).
+    CloseCustomProviderWizard,
+    /// Ask the shell for the model list at the wizard's current address.
+    CustomProviderDiscover,
+    /// Write the wizard's checked models as `[model.<key>]` entries.
+    CustomProviderSave,
+    /// Settings trigger row that opens the wizard.
+    SetCustomProviderWizard(bool),
+    /// One keystroke while the wizard is open (it owns the keyboard).
+    CustomProviderWizardKey(crossterm::event::KeyEvent),
+    /// Bracketed paste while the wizard is open - long keys arrive whole.
+    CustomProviderWizardPaste(String),
     SetPerplexityWebSearch(bool),
     SetPerplexityApiKey {
         key: crate::settings::SecretInput,
@@ -1777,12 +1794,33 @@ pub enum Effect {
         provider: Option<String>,
         base_url: Option<String>,
         context_window: Option<u64>,
+        max_context_window: Option<u64>,
         api_backend: Option<String>,
         env_key: Option<String>,
     },
     DeleteCustomModel {
         generation: u64,
         key: String,
+    },
+    /// `open-grok/custom-providers/discover`: list models at a user-supplied
+    /// address. The raw address is forwarded untouched; normalization belongs
+    /// to the shell.
+    DiscoverCustomProvider {
+        generation: u64,
+        server_address: String,
+        format: String,
+        /// `None` when the user skipped the key step. The secret is carried as
+        /// [`crate::settings::SecretInput`] so debug output stays redacted.
+        api_key: Option<crate::settings::SecretInput>,
+    },
+    /// `open-grok/custom-models/upsert-many`: save one wizard batch.
+    UpsertCustomModelsMany {
+        generation: u64,
+        api_backend: String,
+        auth_scheme: String,
+        base_url: String,
+        api_key: Option<crate::settings::SecretInput>,
+        rows: Vec<crate::views::custom_provider_modal::SelectedModelRow>,
     },
     UpdatePerplexityWebSearch {
         enabled: Option<bool>,
@@ -2970,6 +3008,13 @@ pub enum TaskResult {
         error: Option<String>,
         models: Option<acp::SessionModelState>,
         custom_models: Vec<crate::settings::CustomModelRecord>,
+    },
+    /// Discovery against a user-supplied address finished. `error` is the
+    /// shell's message; the wizard keeps it inline instead of toasting it.
+    CustomProviderDiscovered {
+        generation: u64,
+        error: Option<String>,
+        response: Option<crate::views::custom_provider_modal::DiscoverResponse>,
     },
     /// Completion of a Wafer credential update and dynamic catalog refresh.
     WaferApiKeyUpdated {

@@ -1094,6 +1094,7 @@ fn rows_contain_categories_and_settings_through_pr_14() {
             "ui.mouse_reporting_toggle",
             "suggestions.enabled",
             "suggestions.ai_enabled",
+            "sandbox.profile",
             "sandbox.auto_allow_bash",
             "tools.respect_gitignore",
         ]
@@ -8631,13 +8632,21 @@ fn seed_openrouter_catalog(state: &mut SettingsModalState) {
         api_backend: xai_grok_shell::sampling::ApiBackend::ChatCompletions,
     };
     state.pager_snapshot.openrouter_models = vec![
-        model("openrouter:openai/gpt-4o", "openai/gpt-4o", "OpenAI: GPT-4o"),
+        model(
+            "openrouter:openai/gpt-4o",
+            "openai/gpt-4o",
+            "OpenAI: GPT-4o",
+        ),
         model(
             "openrouter:anthropic/claude",
             "anthropic/claude-sonnet-4",
             "Anthropic: Claude Sonnet 4",
         ),
-        model("openrouter:deepseek/v4", "deepseek/deepseek-v4", "DeepSeek: V4"),
+        model(
+            "openrouter:deepseek/v4",
+            "deepseek/deepseek-v4",
+            "DeepSeek: V4",
+        ),
     ];
     state.pager_snapshot.openrouter_enabled_models.clear();
 }
@@ -8658,7 +8667,10 @@ fn openrouter_sheet_slash_search_filters_and_toggles_matched_model() {
     enter_openrouter_sheet(&mut s);
 
     // `/` focuses the sub-sheet search box.
-    let out = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+    let out = handle_settings_key(
+        &mut s,
+        &KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
+    );
     assert!(matches!(out, SettingsKeyOutcome::Changed));
     assert!(s.group_filter_focused);
 
@@ -8679,7 +8691,10 @@ fn openrouter_sheet_slash_search_filters_and_toggles_matched_model() {
 
     // Space toggles the focused (filtered) model — the Claude one, not row
     // 0 of the unfiltered catalog.
-    let out = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+    let out = handle_settings_key(
+        &mut s,
+        &KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+    );
     assert!(
         matches!(
             out,
@@ -8696,7 +8711,10 @@ fn openrouter_sheet_esc_clears_query_before_exiting() {
     seed_openrouter_catalog(&mut s);
     enter_openrouter_sheet(&mut s);
 
-    let _ = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+    let _ = handle_settings_key(
+        &mut s,
+        &KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
+    );
     for c in "zzz-no-match".chars() {
         let _ = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
     }
@@ -8777,11 +8795,17 @@ fn static_group_sheet_keeps_plain_typing_unfiltered() {
         .expect("contextual_hints row present");
     assert!(s.try_enter_picking_group());
 
-    let out = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+    let out = handle_settings_key(
+        &mut s,
+        &KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
+    );
     assert!(matches!(out, SettingsKeyOutcome::Unchanged));
     assert!(!s.group_filter_focused);
 
-    let out = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+    let out = handle_settings_key(
+        &mut s,
+        &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+    );
     assert!(matches!(out, SettingsKeyOutcome::Changed));
     assert!(matches!(
         s.mode(),

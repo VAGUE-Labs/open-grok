@@ -74,9 +74,11 @@ const ALL_SETTINGS_EXERCISED: &[&str] = &[
     "custom_model_provider",
     "custom_model_base_url",
     "custom_model_context_window",
+    "custom_model_max_context_window",
     "custom_model_backend",
     "custom_model_env_key",
     "custom_model_save",
+    "custom_provider_wizard",
     "toolset.perplexity_web_search.enabled",
     "perplexity_api_key",
     "toolset.web_search_source.xai",
@@ -139,6 +141,7 @@ const ALL_SETTINGS_EXERCISED: &[&str] = &[
     "ui.mouse_reporting_toggle",
     "suggestions.enabled",
     "suggestions.ai_enabled",
+    "sandbox.profile",
     "sandbox.auto_allow_bash",
     "tools.respect_gitignore",
 ];
@@ -162,6 +165,7 @@ const LOCAL_FEATURE_FLAG_KEYS: &[(&str, bool)] = &[
     ("suggestions.enabled", false),
     ("suggestions.ai_enabled", false),
     ("sandbox.auto_allow_bash", false),
+    ("sandbox.profile", false),
     ("tools.respect_gitignore", false),
 ];
 
@@ -423,6 +427,12 @@ fn assert_set_bool_action(outcome: SettingsKeyOutcome, key: &str, expected: bool
             assert_eq!(
                 b, expected,
                 "SetAntigravitySkipPermissions value differs from expected"
+            )
+        }
+        ("custom_provider_wizard", Action::SetCustomProviderWizard(b)) => {
+            assert_eq!(
+                b, expected,
+                "SetCustomProviderWizard value differs from expected"
             )
         }
         ("toolset.x_search.enabled", Action::SetXSearchEnabled(b)) => {
@@ -1045,6 +1055,100 @@ fn mouse_click_on_contextual_hints_group_opens_sub_sheet_and_toggles_child() {
 // Per-setting MOUSE paths (keyboard ↔ mouse parity)
 // ---------------------------------------------------------------------------
 
+/// Models -> Custom models -> **Add a custom provider...** is a trigger row:
+/// Space dispatches `SetCustomProviderWizard(true)`, which opens the same wizard
+/// `/provider` does. It stores nothing, so there is no persist to assert.
+#[test]
+fn space_on_custom_provider_wizard_child_opens_the_wizard() {
+    let mut s = make_state();
+    navigate_to(&mut s, "custom_models");
+    let out = handle_settings_key(&mut s, &press(KeyCode::Enter));
+    assert!(matches!(out, SettingsKeyOutcome::Changed));
+    assert!(
+        matches!(s.mode(), SettingsModalMode::PickingGroup { .. }),
+        "Enter on Custom models must open the sub-sheet, got {:?}",
+        s.mode(),
+    );
+
+    let idx = custom_provider_wizard_child_idx();
+    for _ in 0..idx {
+        let _ = handle_settings_key(&mut s, &press(KeyCode::Char('j')));
+    }
+    assert_eq!(
+        group_child_idx(&s),
+        idx,
+        "walking the sub-sheet must land on the wizard row"
+    );
+    let out = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
+    assert_set_bool_action(out, "custom_provider_wizard", true);
+}
+
+/// Mouse parity: one click on the group value column opens the sub-sheet, then a
+/// click on the wizard row dispatches the same Action.
+#[test]
+fn mouse_click_on_custom_provider_wizard_child_opens_the_wizard() {
+    let mut s = make_state();
+    synth_rects(&mut s);
+    let group_row = row_idx_for(&s, "custom_models") as u16;
+    let out = handle_settings_mouse(
+        &mut s,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        72,
+        group_row,
+    );
+    assert!(matches!(out, SettingsKeyOutcome::Changed));
+    assert!(
+        matches!(s.mode(), SettingsModalMode::PickingGroup { .. }),
+        "click on the group value column must open the sub-sheet, got {:?}",
+        s.mode(),
+    );
+
+    let idx = custom_provider_wizard_child_idx();
+    // The renderer does not run here, so lay out the child hit-rects by hand.
+    s.picker_choice_rects = (0..custom_models_children().len())
+        .map(|i| Rect {
+            x: 0,
+            y: i as u16,
+            width: 80,
+            height: 1,
+        })
+        .collect();
+    let out = handle_settings_mouse(
+        &mut s,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        1,
+        idx as u16,
+    );
+    assert_set_bool_action(out, "custom_provider_wizard", true);
+}
+
+/// Position of the wizard row inside the `custom_models` sub-sheet, read from
+/// the registry so the tests do not hardcode the child order.
+fn custom_provider_wizard_child_idx() -> usize {
+    custom_models_children()
+        .iter()
+        .position(|key| *key == "custom_provider_wizard")
+        .expect("the wizard row must be a child of Custom models")
+}
+
+fn custom_models_children() -> &'static [&'static str] {
+    match &SettingsRegistry::defaults()
+        .find("custom_models")
+        .expect("custom_models must be registered")
+        .kind
+    {
+        SettingKind::Group { children } => *children,
+        other => panic!("custom_models must stay a Group, got {other:?}"),
+    }
+}
+
+fn group_child_idx(state: &SettingsModalState) -> usize {
+    match state.mode() {
+        SettingsModalMode::PickingGroup { child_idx, .. } => child_idx,
+        other => panic!("expected the group sub-sheet, got {other:?}"),
+    }
+}
+
 /// Lay out enough row_rects so that `handle_settings_mouse` can resolve
 /// a click to the desired row index. We bypass the renderer here because
 /// the test doesn't run inside a real terminal.
@@ -1568,6 +1672,12 @@ fn seed_openrouter_model_catalog(state: &mut SettingsModalState) {
             name: "OpenAI: GPT-4o".to_string(),
             api_backend: xai_grok_shell::sampling::ApiBackend::ChatCompletions,
         },
+        xai_grok_shell::openrouter_models::OpenRouterModelDescriptor {
+            key: "openrouter:meta-llama/llama-3.1-8b-instruct".to_string(),
+            id: "meta-llama/llama-3.1-8b-instruct".to_string(),
+            name: "Llama 3.1 8B".to_string(),
+            api_backend: xai_grok_shell::sampling::ApiBackend::ChatCompletions,
+        },
     ];
     state.pager_snapshot.openrouter_enabled_models.clear();
 }
@@ -1592,7 +1702,7 @@ fn enter_on_openrouter_models_opens_sub_sheet_and_toggles_enabled() {
             SettingsKeyOutcome::Action(Action::SetOpenRouterEnabledModels { ref models })
                 if models == &["openai/gpt-4o".to_string()]
         ),
-        "Space on a discovered OpenRouter model must enable it, got {out:?}",
+        "Space on a discovered OpenRouter model must enable only it, got {out:?}",
     );
 
     let out = handle_settings_key(&mut s, &press(KeyCode::Esc));
@@ -1638,8 +1748,44 @@ fn mouse_click_on_openrouter_models_opens_sub_sheet_and_toggles_enabled() {
             SettingsKeyOutcome::Action(Action::SetOpenRouterEnabledModels { ref models })
                 if models == &["openai/gpt-4o".to_string()]
         ),
-        "click on a discovered OpenRouter model must enable it, got {out:?}",
+        "click on a discovered OpenRouter model must enable only it, got {out:?}",
     );
+}
+
+#[test]
+fn openrouter_model_selections_stay_explicit_and_allow_disabling_last_model() {
+    let mut s = make_state();
+    seed_openrouter_model_catalog(&mut s);
+    navigate_to(&mut s, "openrouter_models");
+    let out = handle_settings_key(&mut s, &press(KeyCode::Enter));
+    assert!(matches!(out, SettingsKeyOutcome::Changed));
+
+    let toggle_and_refresh = |state: &mut SettingsModalState, expected: &[&str]| {
+        let out = handle_settings_key(state, &press(KeyCode::Char(' ')));
+        let SettingsKeyOutcome::Action(Action::SetOpenRouterEnabledModels { models }) = out else {
+            panic!("OpenRouter toggle must update enabled models, got {out:?}");
+        };
+        assert_eq!(models, expected);
+        // Runtime dispatch refreshes the modal snapshot after each action.
+        state.pager_snapshot.openrouter_enabled_models = models;
+    };
+
+    toggle_and_refresh(&mut s, &["openai/gpt-4o"]);
+    toggle_and_refresh(&mut s, &[]);
+
+    let _ = handle_settings_key(&mut s, &press(KeyCode::Down));
+    toggle_and_refresh(&mut s, &["meta-llama/llama-3.1-8b-instruct"]);
+    let _ = handle_settings_key(&mut s, &press(KeyCode::Up));
+    // Selecting the full catalog must persist both ids, not an empty sentinel.
+    toggle_and_refresh(
+        &mut s,
+        &["meta-llama/llama-3.1-8b-instruct", "openai/gpt-4o"],
+    );
+    toggle_and_refresh(&mut s, &["meta-llama/llama-3.1-8b-instruct"]);
+    let _ = handle_settings_key(&mut s, &press(KeyCode::Down));
+    toggle_and_refresh(&mut s, &[]);
+    // After the last model is disabled, a new toggle enables only that model.
+    toggle_and_refresh(&mut s, &["meta-llama/llama-3.1-8b-instruct"]);
 }
 
 fn seed_custom_models(state: &mut SettingsModalState) {
@@ -1663,7 +1809,11 @@ fn enter_on_custom_models_group_opens_sheet_and_save_without_id_does_not_upsert(
         s.mode(),
         SettingsModalMode::PickingGroup { child_idx: 0, .. }
     ));
-    for _ in 0..9 {
+    let save_idx = custom_models_children()
+        .iter()
+        .position(|key| *key == "custom_model_save")
+        .expect("custom_model_save must stay a custom_models child");
+    for _ in 0..save_idx {
         let _ = handle_settings_key(&mut s, &press(KeyCode::Char('j')));
     }
     let out = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
@@ -2864,6 +3014,7 @@ fn registry_kind_membership_through_pr_14() {
             "contextual_hints.undo",
             "contextual_hints.word_select",
             "custom_model_save",
+            "custom_provider_wizard",
             "diagnostics.crash_handler",
             "display_refresh_auto_cadence",
             "doom_loop_recovery.enabled",
@@ -2885,6 +3036,7 @@ fn registry_kind_membership_through_pr_14() {
             "remember_tool_approvals",
             "respect_manual_folds",
             "sandbox.auto_allow_bash",
+            "sandbox.profile",
             "show_thinking_blocks",
             "show_timeline",
             "show_timestamps",
@@ -2984,6 +3136,7 @@ fn registry_kind_membership_through_pr_14() {
         sorted_int,
         vec![
             "custom_model_context_window",
+            "custom_model_max_context_window",
             "max_thoughts_width",
             "scroll_lines",
             "scroll_speed",
@@ -3168,9 +3321,11 @@ fn defaults_round_trip_through_registry() {
             "custom_model_provider" => SettingValue::Enum(""),
             "custom_model_base_url" => SettingValue::String(String::new()),
             "custom_model_context_window" => SettingValue::Int(200_000),
+            "custom_model_max_context_window" => SettingValue::Int(0),
             "custom_model_backend" => SettingValue::Enum("chat_completions"),
             "custom_model_env_key" => SettingValue::String(String::new()),
             "custom_model_save" => SettingValue::Bool(false),
+            "custom_provider_wizard" => SettingValue::Bool(false),
             "toolset.perplexity_web_search.enabled" => SettingValue::Bool(false),
             "toolset.web_search_source.xai" => SettingValue::Enum("xai"),
             "toolset.web_search_source.codex" => SettingValue::Enum("native"),
@@ -3200,6 +3355,7 @@ fn defaults_round_trip_through_registry() {
             "suggestions.enabled" => SettingValue::Bool(false),
             "suggestions.ai_enabled" => SettingValue::Bool(false),
             "sandbox.auto_allow_bash" => SettingValue::Bool(false),
+            "sandbox.profile" => SettingValue::Bool(false),
             "tools.respect_gitignore" => SettingValue::Bool(false),
             "recap_model" => SettingValue::String(String::new()),
             "memory_model" => SettingValue::String(String::new()),

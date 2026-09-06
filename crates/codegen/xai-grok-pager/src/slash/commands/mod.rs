@@ -41,6 +41,7 @@ pub mod login;
 pub mod logout;
 pub mod loop_cmd;
 pub mod mcps;
+pub mod mission;
 pub mod model;
 pub mod multiline;
 pub mod new;
@@ -48,6 +49,7 @@ pub mod personas;
 pub mod plan;
 pub mod plugin;
 pub mod privacy;
+pub mod provider;
 pub mod queue;
 pub mod recap;
 pub mod release_notes;
@@ -55,6 +57,7 @@ pub mod remember;
 pub mod rename;
 pub mod resume;
 pub mod rewind;
+pub mod sandbox;
 pub mod screen_mode_switch;
 pub mod scroll_debug;
 pub mod session_info;
@@ -86,8 +89,10 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
     vec![
         Arc::new(tutorial::TutorialCommand),
         Arc::new(settings_cmd::SettingsCommand),
+        Arc::new(provider::ProviderCommand),
         Arc::new(dashboard::DashboardCommand),
         Arc::new(workflows::WorkflowsCommand),
+        Arc::new(mission::MissionCommand),
         Arc::new(plugin::PluginsCommand),
         Arc::new(btw::BtwCommand),
         Arc::new(voice::VoiceCommand),
@@ -132,6 +137,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(auto::AutoCommand),
         Arc::new(always_approve::AlwaysApproveCommand),
         Arc::new(yolo_two::YoloTwoCommand),
+        Arc::new(sandbox::SandboxCommand),
         Arc::new(vim_mode::VimModeCommand),
         Arc::new(multiline::MultilineCommand),
         Arc::new(compact_mode::CompactModeCommand),

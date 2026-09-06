@@ -595,9 +595,11 @@ const CUSTOM_MODELS_CHILDREN: &[&str] = &[
     "custom_model_provider",
     "custom_model_base_url",
     "custom_model_context_window",
+    "custom_model_max_context_window",
     "custom_model_backend",
     "custom_model_env_key",
     "custom_model_save",
+    "custom_provider_wizard",
 ];
 
 pub(crate) const CUSTOM_MODEL_CONTEXT_WINDOW_MIN: i64 = 1_000;
@@ -609,6 +611,11 @@ const CUSTOM_MODEL_PROVIDER_CHOICES: &[EnumChoice] = &[
         canonical: "",
         display: "(inherit)",
         description: "Use the default provider for this catalog key.",
+    },
+    EnumChoice {
+        canonical: "custom",
+        display: "Custom endpoint",
+        description: "A server address you supplied (base_url plus an explicit auth_scheme).",
     },
     EnumChoice {
         canonical: "zai",
@@ -1162,6 +1169,28 @@ pub fn default_settings() -> Vec<SettingMeta> {
             restart_required: true,
             hidden_in_minimal: false,
         },
+        SettingMeta {
+            key: "codex_persistent_mode",
+            category: SettingCategory::Agent,
+            owner: SettingOwner::Shell,
+            label: "Codex persistent work",
+            description: "Continue relevant follow-ups and monitoring while sending progress messages. Uses Codex persistent mode (reasoning disabled); Escape still cancels. Requires async user messaging. Restart to apply.",
+            keywords: &["codex", "persistent", "follow", "monitor", "astra"],
+            kind: SettingKind::Bool { default: false },
+            restart_required: true,
+            hidden_in_minimal: false,
+        },
+        SettingMeta {
+            key: "codex_guardian_review",
+            category: SettingCategory::Agent,
+            owner: SettingOwner::Shell,
+            label: "Codex browser action review",
+            description: "Use the model's Guardian guidance to review browser and computer MCP actions before execution. Existing permission rules still apply. Restart to apply.",
+            keywords: &["codex", "guardian", "browser", "computer", "review"],
+            kind: SettingKind::Bool { default: false },
+            restart_required: true,
+            hidden_in_minimal: false,
+        },
         // SHELL-owned `[ui].code_mode`. The running session keeps its mode;
         // this user preference is resolved only when a new session starts.
         SettingMeta {
@@ -1478,7 +1507,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
             category: SettingCategory::Models,
             owner: SettingOwner::Shell,
             label: "OpenRouter models",
-            description: "Choose which discovered OpenRouter models appear in model settings and are available to subagents.",
+            description: "Choose which discovered OpenRouter text models appear in model settings and are available to subagents. Only selected models are enabled.",
             keywords: &[
                 "openrouter",
                 "open",
@@ -1610,13 +1639,28 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "custom_model_context_window",
             category: SettingCategory::Models,
             owner: SettingOwner::Pager,
-            label: "Context window",
-            description: "Token context window written to [model.<key>].context_window (1,000–4,000,000).",
+            label: "Usable context window",
+            description: "Usable token budget. For Codex, this already includes context headroom. A nonzero raw context override below takes precedence when saving.",
             keywords: &["custom", "model", "context", "window", "tokens"],
             kind: SettingKind::Int {
                 default: CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
                 min: CUSTOM_MODEL_CONTEXT_WINDOW_MIN,
                 max: CUSTOM_MODEL_CONTEXT_WINDOW_MAX,
+            },
+            restart_required: false,
+            hidden_in_minimal: false,
+        },
+        SettingMeta {
+            key: "custom_model_max_context_window",
+            category: SettingCategory::Models,
+            owner: SettingOwner::Pager,
+            label: "Codex raw context override",
+            description: "Raw Codex context budget, including headroom. May exceed the catalog maximum. 1,000,000 gives 950,000 usable tokens at 95% and compacts at 900,000. Zero uses the usable context field.",
+            keywords: &["codex", "context", "maximum", "override", "tokens"],
+            kind: SettingKind::Int {
+                default: 0,
+                min: 0,
+                max: 100_000_000,
             },
             restart_required: false,
             hidden_in_minimal: false,
@@ -1657,6 +1701,19 @@ pub fn default_settings() -> Vec<SettingMeta> {
             label: "Save custom model",
             description: "Write the draft as [model.<key>] and refresh the catalog. Requires a catalog key and model id.",
             keywords: &["custom", "model", "save", "add", "upsert"],
+            kind: SettingKind::Bool { default: false },
+            restart_required: false,
+            hidden_in_minimal: false,
+        },
+        SettingMeta {
+            key: "custom_provider_wizard",
+            category: SettingCategory::Models,
+            owner: SettingOwner::Pager,
+            label: "Add a custom provider...",
+            description: "Point Open Grok at any OpenAI- or Anthropic-compatible server: enter the address, optionally a key, pick the wire format, and choose which models to keep.",
+            keywords: &[
+                "custom", "provider", "endpoint", "wizard", "base", "url", "add",
+            ],
             kind: SettingKind::Bool { default: false },
             restart_required: false,
             hidden_in_minimal: false,
@@ -2742,6 +2799,24 @@ pub fn default_settings() -> Vec<SettingMeta> {
             hidden_in_minimal: false,
         },
         SettingMeta {
+            key: "features.context_management.experimental_mode",
+            category: SettingCategory::Advanced,
+            owner: SettingOwner::Shell,
+            label: "Experimental context management",
+            description: "Let Codex models start fresh context windows and recover work from local session history and private notes. Preserves the running environment. Restart required.",
+            keywords: &[
+                "codex",
+                "context",
+                "history",
+                "notes",
+                "experimental",
+                "window",
+            ],
+            kind: SettingKind::Bool { default: false },
+            restart_required: true,
+            hidden_in_minimal: false,
+        },
+        SettingMeta {
             key: "features.non_git_warning",
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
@@ -2862,6 +2937,21 @@ pub fn default_settings() -> Vec<SettingMeta> {
                           command completions. Uses extra tokens; leave off if you only want \
                           history/path matches. Restart required.",
             keywords: &["suggestions", "ai", "shell", "completion", "flag"],
+            kind: SettingKind::Bool { default: false },
+            restart_required: true,
+            hidden_in_minimal: false,
+        },
+        SettingMeta {
+            key: "sandbox.profile",
+            category: SettingCategory::Advanced,
+            owner: SettingOwner::Shell,
+            label: "OS sandbox",
+            description: "Off by default. Enable the workspace sandbox for new sessions: \
+                          read everywhere, write only to the workspace, Open Grok state, \
+                          and temporary directories. Restart Open Grok to apply. Existing \
+                          sessions keep their saved profile; CLI, environment, and managed \
+                          profiles take precedence over this preference.",
+            keywords: &["sandbox", "workspace", "isolation", "permissions"],
             kind: SettingKind::Bool { default: false },
             restart_required: true,
             hidden_in_minimal: false,

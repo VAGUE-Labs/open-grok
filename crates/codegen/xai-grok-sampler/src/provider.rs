@@ -10,8 +10,9 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value;
 use std::sync::{Arc, OnceLock};
 use xai_grok_sampling_types::{
-    ApiBackend, ChatCompletionRequest, ChatThinkingMode, ModelProvider, ProviderProfile,
-    ReasoningEffort, ReasoningSummary, RequestMetadataPolicy, ResponsesDialect, SamplingError,
+    ApiBackend, ChatCompletionRequest, ChatReasoningConfig, ChatThinkingMode, ModelProvider,
+    ProviderProfile, ReasoningEffort, ReasoningSummary, RequestMetadataPolicy, ResponsesDialect,
+    SamplingError,
 };
 
 use crate::config::{CodexApprovalPolicy, CodexPermissions, SamplerConfig};
@@ -47,6 +48,9 @@ pub struct ResponsesRequestPolicy {
     pub multi_agent_v2: bool,
     pub use_responses_lite: bool,
     pub local_effort: Option<ReasoningEffort>,
+    pub ultra_effort: Option<ReasoningEffort>,
+    pub verbosity: Option<String>,
+    pub persistent_instructions: Option<String>,
     pub reasoning_summary: Option<ReasoningSummary>,
     pub codex_permissions: Option<CodexPermissions>,
     pub session_id: Option<String>,
@@ -591,9 +595,10 @@ pub struct GeminiProvider;
 #[derive(Debug)]
 pub struct CustomProvider;
 
-/// OpenRouter is an OpenAI-compatible Chat Completions gateway. It keeps
-/// `reasoning_effort` for models that advertise reasoning, and drops
-/// Grok-internal `service_tier` plus per-message `model_id`.
+/// OpenRouter is an OpenAI-compatible Chat Completions gateway. It maps
+/// `reasoning_effort` onto the nested `reasoning` object OpenRouter
+/// documents, copies replayed thinking onto `messages[].reasoning`, and
+/// drops Grok-internal `service_tier` plus per-message `model_id`.
 #[derive(Debug)]
 pub struct OpenRouterProvider;
 
@@ -622,8 +627,24 @@ impl ProviderAdapter for OpenRouterProvider {
     fn sanitize_chat_request(&self, request: &mut ChatCompletionRequest) {
         request.service_tier = None;
         request.thinking = None;
+        let effort = request.reasoning_effort.take().or_else(|| {
+            request
+                .reasoning
+                .as_ref()
+                .and_then(|reasoning| reasoning.effort)
+        });
+        if let Some(effort) = effort {
+            request.reasoning = Some(ChatReasoningConfig::effort(
+                normalize_openrouter_reasoning_effort(effort),
+            ));
+        }
         for message in &mut request.messages {
             message.model_id = None;
+            if message.reasoning.is_none() {
+                message.reasoning = message.reasoning_content.take();
+            } else {
+                message.reasoning_content = None;
+            }
         }
     }
 }
@@ -636,12 +657,14 @@ impl ProviderAdapter for CustomProvider {
     /// Keep the Chat Completions body to the portable OpenAI surface. The
     /// endpoint's actual grammar is unknown, so a strict server must never see
     /// Grok-internal routing (`service_tier`), a per-message model override, or
-    /// a provider-specific `thinking` extension.
+    /// provider-specific `thinking` / nested `reasoning` extensions.
     fn sanitize_chat_request(&self, request: &mut ChatCompletionRequest) {
         request.service_tier = None;
         request.thinking = None;
+        request.reasoning = None;
         for message in &mut request.messages {
             message.model_id = None;
+            message.reasoning = None;
         }
     }
 
@@ -660,6 +683,13 @@ impl ProviderAdapter for CustomProvider {
         headers
             .entry("anthropic-version")
             .or_insert_with(|| HeaderValue::from_static(ANTHROPIC_VERSION));
+    }
+}
+
+fn normalize_openrouter_reasoning_effort(effort: ReasoningEffort) -> ReasoningEffort {
+    match effort {
+        ReasoningEffort::Ultra => ReasoningEffort::Max,
+        other => other,
     }
 }
 
@@ -920,13 +950,31 @@ fn patch_codex_responses_request(request_body: &mut Value, policy: ResponsesRequ
         Some(ReasoningEffort::Max | ReasoningEffort::Ultra)
     ) {
         ensure_reasoning_object(request_body);
-        request_body["reasoning"]["effort"] = Value::String("max".to_owned());
+        let effort = if policy.local_effort == Some(ReasoningEffort::Ultra) {
+            policy.ultra_effort.unwrap_or(ReasoningEffort::Max)
+        } else {
+            ReasoningEffort::Max
+        };
+        request_body["reasoning"]["effort"] = Value::String(effort.as_str().to_owned());
+    }
+
+    if let Some(verbosity @ ("low" | "medium" | "high")) = policy.verbosity.as_deref() {
+        if request_body.get("text").is_none_or(Value::is_null) {
+            request_body["text"] = serde_json::json!({});
+        }
+        if let Some(text) = request_body.get_mut("text").and_then(Value::as_object_mut) {
+            text.entry("verbosity")
+                .or_insert_with(|| Value::String(verbosity.to_owned()));
+        }
     }
 
     if !policy.multi_agent_v2 {
+        patch_codex_persistent_mode(request_body, policy.persistent_instructions.as_deref());
         return;
     }
-    let mode_text = if policy.local_effort == Some(ReasoningEffort::Ultra) {
+    let mode_text = if policy.local_effort == Some(ReasoningEffort::Ultra)
+        && policy.persistent_instructions.is_none()
+    {
         PROACTIVE_MULTI_AGENT_MODE_TEXT
     } else {
         EXPLICIT_REQUEST_ONLY_MULTI_AGENT_MODE_TEXT
@@ -947,6 +995,118 @@ fn patch_codex_responses_request(request_body: &mut Value, policy: ResponsesRequ
         .filter(|item| item.get("role").and_then(Value::as_str) == Some("user"))
         .map_or(input.len(), |_| input.len() - 1);
     input.insert(insert_at, mode_item);
+    patch_codex_persistent_mode(request_body, policy.persistent_instructions.as_deref());
+}
+
+fn patch_codex_persistent_mode(body: &mut Value, instructions: Option<&str>) {
+    if let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) {
+        input.retain(|item| {
+            if item.get("role").and_then(Value::as_str) != Some("developer") {
+                return true;
+            }
+            let owned = |text: &str| {
+                text.starts_with("<persistent_mode>\n") && text.ends_with("\n</persistent_mode>")
+            };
+            match item.get("content") {
+                Some(Value::String(text)) => !owned(text),
+                Some(Value::Array(parts)) if parts.len() == 1 => !parts[0]
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(owned),
+                _ => true,
+            }
+        });
+    }
+    let Some(instructions) = instructions.filter(|text| !text.trim().is_empty()) else {
+        return;
+    };
+    // codex-rs 0.153.1 maps the local persistent effort to `disabled`.
+    ensure_reasoning_object(body);
+    body["reasoning"]["effort"] = "disabled".into();
+    if let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) {
+        let insert_at = input
+            .last()
+            .filter(|item| item["role"] == "user")
+            .map_or(input.len(), |_| input.len() - 1);
+        input.insert(insert_at, serde_json::json!({
+            "type": "message", "role": "developer",
+            "content": [{"type": "input_text", "text": format!("<persistent_mode>\n{instructions}\n</persistent_mode>")}]
+        }));
+    }
+}
+
+#[cfg(test)]
+mod codex_catalog_1531_tests {
+    use super::*;
+
+    #[test]
+    fn ultra_uses_catalog_effort_but_max_does_not() {
+        for (local, expected) in [
+            (ReasoningEffort::Ultra, "xhigh"),
+            (ReasoningEffort::Max, "max"),
+        ] {
+            let mut body = serde_json::json!({"input":[{"role":"user","content":"work"}],"text":{"format":{"type":"text"}}});
+            patch_codex_responses_request(
+                &mut body,
+                ResponsesRequestPolicy {
+                    local_effort: Some(local),
+                    ultra_effort: Some(ReasoningEffort::Xhigh),
+                    multi_agent_v2: true,
+                    verbosity: Some("low".into()),
+                    ..Default::default()
+                },
+            );
+            assert_eq!(body["reasoning"]["effort"], expected);
+            assert_eq!(body["text"]["verbosity"], "low");
+            assert_eq!(body["text"]["format"]["type"], "text");
+            assert_eq!(
+                body["input"][0]["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains(PROACTIVE_MULTI_AGENT_MODE_TEXT),
+                local == ReasoningEffort::Ultra
+            );
+        }
+    }
+
+    #[test]
+    fn persistent_mode_is_request_local_and_provider_scoped() {
+        let original = serde_json::json!({"input":[{"role":"user","content":"work"}],"reasoning":{"effort":"medium"}});
+        let mut codex = original.clone();
+        provider_adapter(ModelProvider::Codex).patch_responses_request(
+            &mut codex,
+            ResponsesRequestPolicy {
+                persistent_instructions: Some("Continue the authorized task.".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(codex["reasoning"]["effort"], "disabled");
+        assert_eq!(codex["input"].as_array().unwrap().len(), 2);
+        provider_adapter(ModelProvider::Codex).patch_responses_request(
+            &mut codex,
+            ResponsesRequestPolicy {
+                persistent_instructions: Some("Updated instructions.".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(codex["input"].as_array().unwrap().len(), 2);
+        assert!(!codex.to_string().contains("Continue the authorized task."));
+        for provider in [ModelProvider::Xai, ModelProvider::Custom] {
+            let mut body = original.clone();
+            provider_adapter(provider).patch_responses_request(
+                &mut body,
+                ResponsesRequestPolicy {
+                    persistent_instructions: Some("must not leak".into()),
+                    ..Default::default()
+                },
+            );
+            assert!(!body.to_string().contains("must not leak"));
+        }
+        let mut disabled = original.clone();
+        provider_adapter(ModelProvider::Codex)
+            .patch_responses_request(&mut disabled, Default::default());
+        assert!(!disabled.to_string().contains("persistent_mode"));
+    }
 }
 
 fn patch_codex_agent_message_ids(request_body: &mut Value) {
@@ -2147,12 +2307,14 @@ mod tests {
     fn custom_chat_request_keeps_only_the_portable_openai_surface() {
         use xai_grok_sampling_types::types::{ChatRequestMessage, ToolDefinition};
 
-        let assistant = ChatRequestMessage::assistant("previous turn", "byo-model", None);
+        let mut assistant = ChatRequestMessage::assistant("previous turn", "byo-model", None);
+        assistant.reasoning = Some("gateway thoughts".to_owned());
         let mut request = ChatCompletionRequest::new("byo-model", vec![assistant]);
         request.temperature = Some(0.7);
         request.reasoning_effort = Some(ReasoningEffort::High);
         request.service_tier = Some("priority".to_owned());
         request.thinking = Some(ChatThinkingMode::enabled());
+        request.reasoning = Some(ChatReasoningConfig::effort(ReasoningEffort::High));
         request.tools = Some(vec![ToolDefinition::function(
             "lookup",
             Some("Look up a value"),
@@ -2175,6 +2337,8 @@ mod tests {
                 .all(|message| message.model_id.is_none())
         );
         let wire = serde_json::to_value(&request).expect("serializes");
+        assert!(wire.get("reasoning").is_none());
+        assert!(wire["messages"][0].get("reasoning").is_none());
         assert_eq!(wire["tools"][0]["type"], "function");
     }
 
@@ -2224,6 +2388,7 @@ mod tests {
                     supports_backend_search: false,
                     supports_standalone_web_search: false,
                     codex_multi_agent_v2: false,
+                    codex_model: Default::default(),
                     use_responses_lite: false,
                     experimental_supported_tools: Vec::new(),
                     codex_permissions: None,
@@ -2585,6 +2750,114 @@ mod tests {
     }
 
     #[test]
+    fn openrouter_uses_nested_reasoning_and_message_field() {
+        use xai_grok_sampling_types::types::{ChatRequestMessage, ToolDefinition};
+
+        let assistant = ChatRequestMessage::assistant(
+            "previous turn",
+            "anthropic/claude-sonnet-4",
+            Some("prior thoughts".to_owned()),
+        );
+        let mut request = ChatCompletionRequest::new("anthropic/claude-sonnet-4", vec![assistant]);
+        request.temperature = Some(0.2);
+        request.reasoning_effort = Some(ReasoningEffort::Ultra);
+        request.service_tier = Some("priority".to_owned());
+        request.thinking = Some(ChatThinkingMode::enabled());
+        request.tools = Some(vec![ToolDefinition::function(
+            "lookup",
+            Some("Look up a value"),
+            serde_json::json!({
+                "type": "object",
+                "properties": {"key": {"type": "string"}},
+                "required": ["key"]
+            }),
+        )]);
+
+        provider_adapter(ModelProvider::OpenRouter).sanitize_chat_request(&mut request);
+
+        assert!(
+            request
+                .messages
+                .iter()
+                .all(|message| message.model_id.is_none())
+        );
+        assert_eq!(request.service_tier, None);
+        assert!(request.thinking.is_none());
+        assert_eq!(request.reasoning_effort, None);
+        assert_eq!(
+            request.reasoning,
+            Some(ChatReasoningConfig::effort(ReasoningEffort::Max))
+        );
+        assert_eq!(
+            request.messages[0].reasoning.as_deref(),
+            Some("prior thoughts")
+        );
+        assert!(request.messages[0].reasoning_content.is_none());
+        assert_eq!(request.temperature, Some(0.2));
+
+        let wire = serde_json::to_value(&request).expect("serializes");
+        assert!(wire.get("reasoning_effort").is_none());
+        assert_eq!(wire["reasoning"]["effort"], "max");
+        assert!(wire.get("thinking").is_none());
+        assert_eq!(wire["messages"][0]["reasoning"], "prior thoughts");
+        assert!(wire["messages"][0].get("reasoning_content").is_none());
+        assert_eq!(wire["tools"][0]["function"]["name"], "lookup");
+
+        let mut none_off = ChatCompletionRequest::new(
+            "anthropic/claude-sonnet-4",
+            vec![ChatRequestMessage::user("hi")],
+        );
+        none_off.reasoning_effort = Some(ReasoningEffort::None);
+        provider_adapter(ModelProvider::OpenRouter).sanitize_chat_request(&mut none_off);
+        assert_eq!(none_off.reasoning_effort, None);
+        assert_eq!(
+            none_off.reasoning,
+            Some(ChatReasoningConfig::effort(ReasoningEffort::None))
+        );
+
+        let mut unset =
+            ChatCompletionRequest::new("openai/gpt-4o", vec![ChatRequestMessage::user("hi")]);
+        provider_adapter(ModelProvider::OpenRouter).sanitize_chat_request(&mut unset);
+        assert!(unset.reasoning.is_none());
+        assert!(unset.reasoning_effort.is_none());
+
+        // Both the shared shorthand and explicitly supplied nested controls
+        // must use the gateway's effort vocabulary. The shorthand is
+        // authoritative when both forms are supplied.
+        for effort in [
+            ReasoningEffort::None,
+            ReasoningEffort::Minimal,
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+            ReasoningEffort::Xhigh,
+            ReasoningEffort::Max,
+            ReasoningEffort::Ultra,
+        ] {
+            let expected = if effort == ReasoningEffort::Ultra {
+                ReasoningEffort::Max
+            } else {
+                effort
+            };
+            for nested in [false, true] {
+                let mut request = ChatCompletionRequest::new("model", Vec::new());
+                request.reasoning = Some(ChatReasoningConfig::effort(if nested {
+                    effort
+                } else {
+                    ReasoningEffort::Medium
+                }));
+                if !nested {
+                    request.reasoning_effort = Some(effort);
+                }
+                provider_adapter(ModelProvider::OpenRouter).sanitize_chat_request(&mut request);
+                let wire = serde_json::to_value(request).expect("serializes");
+                assert!(wire.get("reasoning_effort").is_none());
+                assert_eq!(wire["reasoning"]["effort"], expected.as_str());
+            }
+        }
+    }
+
+    #[test]
     fn fireworks_expands_annotation_only_tool_schemas() {
         use xai_grok_sampling_types::types::ToolDefinition;
 
@@ -2653,6 +2926,7 @@ mod tests {
                 supports_backend_search: false,
                 supports_standalone_web_search: false,
                 codex_multi_agent_v2: false,
+                codex_model: Default::default(),
                 use_responses_lite: false,
                 experimental_supported_tools: Vec::new(),
                 codex_permissions: None,

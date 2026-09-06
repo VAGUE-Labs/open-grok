@@ -9,6 +9,11 @@ use super::ctx::{
     active_agent_session_id, get_active_agent_mut, navigate_clearing_selection, open_url_or_show,
     sync_sleep_inhibitor, with_active_agent, with_scrollback,
 };
+use super::custom_provider::{
+    close_custom_provider_wizard, custom_provider_discover, custom_provider_key,
+    custom_provider_paste, custom_provider_save, open_custom_provider_wizard,
+    set_custom_provider_wizard,
+};
 use super::dashboard::{
     dispatch_dashboard_attach, dispatch_dashboard_begin_rename, dispatch_dashboard_change_location,
     dispatch_dashboard_commit_rename, dispatch_dashboard_confirm_worktree,
@@ -1176,6 +1181,12 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::SetInvertScroll(v) => set_invert_scroll(app, v),
         Action::SetScrollLines(v) => set_scroll_lines(app, v),
         Action::SetShowThinkingBlocks(v) => set_show_thinking_blocks(app, v),
+        Action::SetCodexPersistentMode(value) => {
+            super::settings::setters::set_codex_behavior(app, "codex_persistent_mode", value)
+        }
+        Action::SetCodexGuardianReview(value) => {
+            super::settings::setters::set_codex_behavior(app, "codex_guardian_review", value)
+        }
         Action::SetStreamToolCalls(v) => set_stream_tool_calls(app, v),
         Action::SetGroupToolVerbs(v) => set_group_tool_verbs(app, v),
         Action::SetCollapsedEditBlocks(v) => set_collapsed_edit_blocks(app, v),
@@ -1247,10 +1258,20 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::SetCustomModelName(value) => set_custom_model_name(app, value),
         Action::SetCustomModelProvider(value) => set_custom_model_provider(app, value),
         Action::SetCustomModelBaseUrl(value) => set_custom_model_base_url(app, value),
+        Action::SetCustomModelMaxContextWindow(value) => {
+            super::settings::setters::set_custom_model_max_context_window(app, value)
+        }
         Action::SetCustomModelContextWindow(value) => set_custom_model_context_window(app, value),
         Action::SetCustomModelBackend(value) => set_custom_model_backend(app, value),
         Action::SetCustomModelEnvKey(value) => set_custom_model_env_key(app, value),
         Action::SetCustomModelSave(save) => set_custom_model_save(app, save),
+        Action::SetCustomProviderWizard(open) => set_custom_provider_wizard(app, open),
+        Action::OpenCustomProviderWizard => open_custom_provider_wizard(app),
+        Action::CloseCustomProviderWizard => close_custom_provider_wizard(app),
+        Action::CustomProviderDiscover => custom_provider_discover(app),
+        Action::CustomProviderSave => custom_provider_save(app),
+        Action::CustomProviderWizardKey(key) => custom_provider_key(app, key),
+        Action::CustomProviderWizardPaste(text) => custom_provider_paste(app, &text),
         Action::DeleteCustomModel { key } => delete_custom_model(app, key),
         Action::RefreshCustomModels => refresh_custom_models(app),
         Action::SetPerplexityWebSearch(enabled) => set_perplexity_web_search(app, enabled),

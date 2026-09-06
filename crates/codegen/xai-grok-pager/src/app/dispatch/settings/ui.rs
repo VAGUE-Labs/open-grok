@@ -236,9 +236,12 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
                 custom_model_base_url: String::new(),
                 custom_model_context_window:
                     crate::settings::defs::CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
+
+                custom_model_max_context_window: 0,
                 custom_model_backend: "chat_completions".to_owned(),
                 custom_model_env_key: String::new(),
                 custom_model_save: false,
+                custom_provider_wizard: false,
                 perplexity_web_search_enabled,
                 web_search_source,
                 x_search_enabled,
@@ -461,9 +464,12 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(
         custom_model_provider: String::new(),
         custom_model_base_url: String::new(),
         custom_model_context_window: crate::settings::defs::CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
+
+        custom_model_max_context_window: 0,
         custom_model_backend: "chat_completions".to_owned(),
         custom_model_env_key: String::new(),
         custom_model_save: false,
+        custom_provider_wizard: false,
         perplexity_web_search_enabled: app.perplexity_web_search_enabled,
         web_search_source: xai_grok_shell::util::config::load_web_search_source_sync(),
         x_search_enabled: xai_grok_shell::util::config::load_x_search_config_sync().enabled,
@@ -1301,9 +1307,12 @@ pub(crate) fn build_pager_snapshot(app: &AppView) -> crate::settings::PagerLocal
         custom_model_provider: String::new(),
         custom_model_base_url: String::new(),
         custom_model_context_window: crate::settings::defs::CUSTOM_MODEL_CONTEXT_WINDOW_DEFAULT,
+
+        custom_model_max_context_window: 0,
         custom_model_backend: "chat_completions".to_owned(),
         custom_model_env_key: String::new(),
         custom_model_save: false,
+        custom_provider_wizard: false,
         perplexity_web_search_enabled: app.perplexity_web_search_enabled,
         web_search_source: xai_grok_shell::util::config::load_web_search_source_sync(),
         x_search_enabled: xai_grok_shell::util::config::load_x_search_config_sync().enabled,
@@ -1437,6 +1446,9 @@ pub(in crate::app::dispatch) fn action_for_reset(
         ("custom_model_base_url", SettingValue::String(s)) => {
             Some(Action::SetCustomModelBaseUrl(s.clone()))
         }
+        ("custom_model_max_context_window", SettingValue::Int(v)) => {
+            Some(Action::SetCustomModelMaxContextWindow(*v))
+        }
         ("custom_model_context_window", SettingValue::Int(v)) => {
             Some(Action::SetCustomModelContextWindow(*v))
         }
@@ -1447,6 +1459,9 @@ pub(in crate::app::dispatch) fn action_for_reset(
             Some(Action::SetCustomModelEnvKey(s.clone()))
         }
         ("custom_model_save", SettingValue::Bool(b)) => Some(Action::SetCustomModelSave(*b)),
+        ("custom_provider_wizard", SettingValue::Bool(b)) => {
+            Some(Action::SetCustomProviderWizard(*b))
+        }
         (
             "toolset.web_search_source.xai"
             | "toolset.web_search_source.codex"
@@ -1539,6 +1554,12 @@ pub(in crate::app::dispatch) fn action_for_reset(
         ("invert_scroll", SettingValue::Bool(b)) => Some(Action::SetInvertScroll(*b)),
         ("scroll_lines", SettingValue::Int(v)) => Some(Action::SetScrollLines(*v)),
         ("show_thinking_blocks", SettingValue::Bool(b)) => Some(Action::SetShowThinkingBlocks(*b)),
+        ("codex_persistent_mode", SettingValue::Bool(b)) => {
+            Some(Action::SetCodexPersistentMode(*b))
+        }
+        ("codex_guardian_review", SettingValue::Bool(b)) => {
+            Some(Action::SetCodexGuardianReview(*b))
+        }
         ("stream_tool_calls", SettingValue::Bool(b)) => Some(Action::SetStreamToolCalls(*b)),
         ("group_tool_verbs", SettingValue::Bool(b)) => Some(Action::SetGroupToolVerbs(*b)),
         ("collapsed_edit_blocks", SettingValue::Bool(b)) => {
@@ -2001,6 +2022,12 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
             }
         }
         ("show_thinking_blocks", SettingValue::Bool(b)) => set_show_thinking_blocks_inner(app, *b),
+        ("codex_persistent_mode", SettingValue::Bool(b)) => {
+            app.current_ui.codex_persistent_mode = Some(*b)
+        }
+        ("codex_guardian_review", SettingValue::Bool(b)) => {
+            app.current_ui.codex_guardian_review = Some(*b)
+        }
         ("stream_tool_calls", SettingValue::Bool(b)) => set_stream_tool_calls_inner(app, *b),
         ("group_tool_verbs", SettingValue::Bool(b)) => set_group_tool_verbs_inner(app, *b),
         ("collapsed_edit_blocks", SettingValue::Bool(b)) => {

@@ -26,7 +26,17 @@ pub struct CustomModelRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_compact_token_limit: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_backend: Option<String>,
+    /// Override the Codex Responses transport; omission inherits the catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_responses_lite: Option<bool>,
+    /// Codex Responses tool capabilities; an empty list explicitly disables them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub experimental_supported_tools: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env_key: Option<String>,
     /// Persist only when the user typed one. Prefer [`Self::env_key`].
@@ -55,7 +65,15 @@ pub struct CustomModelPublicRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_compact_token_limit: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_backend: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_responses_lite: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub experimental_supported_tools: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env_key: Option<String>,
     /// Resolved credential header for this row, never the credential itself.
@@ -89,12 +107,25 @@ pub fn normalize_custom_model(
 
     validate_model_key(&record.key)?;
     validate_model_id(&record.model)?;
+    if record.max_context_window == Some(0) || record.auto_compact_token_limit == Some(0) {
+        bail!("max_context_window and auto_compact_token_limit must be greater than 0");
+    }
     if record.context_window == Some(0) {
         bail!("context_window must be greater than 0");
     }
 
     if let Some(raw) = record.provider.as_deref() {
         record.provider = Some(parse_provider(raw)?.as_str().to_owned());
+    }
+    if record.max_context_window.is_some()
+        && record
+            .provider
+            .as_deref()
+            .is_some_and(|provider| provider != "codex")
+    {
+        bail!(
+            "max_context_window is a Codex raw-context override; use context_window for this provider"
+        );
     }
     if let Some(raw) = record.api_backend.as_deref() {
         record.api_backend = Some(api_backend_as_str(parse_api_backend(raw)?).to_owned());
@@ -148,7 +179,13 @@ impl CustomModelRecord {
             provider: self.provider.clone(),
             base_url: self.base_url.clone(),
             context_window: self.context_window,
+
+            max_context_window: self.max_context_window,
+
+            auto_compact_token_limit: self.auto_compact_token_limit,
             api_backend: self.api_backend.clone(),
+            use_responses_lite: self.use_responses_lite,
+            experimental_supported_tools: self.experimental_supported_tools.clone(),
             env_key: self.env_key.clone(),
             auth_scheme: self
                 .resolved_auth_scheme()
@@ -176,8 +213,31 @@ impl CustomModelRecord {
                 TomlValue::Integer(i64::try_from(context_window).unwrap_or(i64::MAX)),
             );
         }
+        for (key, value) in [
+            ("max_context_window", self.max_context_window),
+            ("auto_compact_token_limit", self.auto_compact_token_limit),
+        ] {
+            if let Some(value) = value {
+                table.insert(
+                    key.into(),
+                    TomlValue::Integer(value.min(i64::MAX as u64) as i64),
+                );
+            }
+        }
         if let Some(api_backend) = &self.api_backend {
             table.insert("api_backend".into(), TomlValue::String(api_backend.clone()));
+        }
+        if let Some(use_responses_lite) = self.use_responses_lite {
+            table.insert(
+                "use_responses_lite".into(),
+                TomlValue::Boolean(use_responses_lite),
+            );
+        }
+        if let Some(tools) = &self.experimental_supported_tools {
+            table.insert(
+                "experimental_supported_tools".into(),
+                TomlValue::Array(tools.iter().cloned().map(TomlValue::String).collect()),
+            );
         }
         if let Some(env_key) = &self.env_key {
             table.insert("env_key".into(), TomlValue::String(env_key.clone()));
@@ -212,8 +272,16 @@ impl CustomModelRecord {
             .as_deref()
             .and_then(|raw| parse_provider(raw).ok())
             == Some(ModelProvider::Custom);
-        (is_user_endpoint && self.api_backend.as_deref() == Some("messages"))
-            .then_some(xai_grok_sampler::AuthScheme::XApiKey)
+        if is_user_endpoint {
+            match self.api_backend.as_deref() {
+                Some("messages") => return Some(xai_grok_sampler::AuthScheme::XApiKey),
+                Some("google_ai_studio" | "ai_studio" | "gemini" | "google") => {
+                    return Some(xai_grok_sampler::AuthScheme::XGoogApiKey);
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     pub fn to_override(&self) -> ConfigModelOverride {
@@ -226,10 +294,16 @@ impl CustomModelRecord {
                 .and_then(|raw| parse_provider(raw).ok()),
             base_url: self.base_url.clone(),
             context_window: self.context_window,
+
+            max_context_window: self.max_context_window,
+
+            auto_compact_token_limit: self.auto_compact_token_limit,
             api_backend: self
                 .api_backend
                 .as_deref()
                 .and_then(|raw| parse_api_backend(raw).ok()),
+            use_responses_lite: self.use_responses_lite,
+            experimental_supported_tools: self.experimental_supported_tools.clone(),
             env_key: self.env_key.clone().map(EnvKeys::single),
             api_key: self.api_key.clone(),
             auth_scheme: self.resolved_auth_scheme(),
@@ -246,7 +320,13 @@ pub fn override_to_public(key: &str, model: &ConfigModelOverride) -> CustomModel
         provider: model.provider.map(ModelProvider::as_str).map(str::to_owned),
         base_url: model.base_url.clone(),
         context_window: model.context_window,
+
+        max_context_window: model.max_context_window,
+
+        auto_compact_token_limit: model.auto_compact_token_limit,
         api_backend: model.api_backend.map(api_backend_as_str).map(str::to_owned),
+        use_responses_lite: model.use_responses_lite,
+        experimental_supported_tools: model.experimental_supported_tools.clone(),
         env_key: model
             .env_key
             .as_ref()
@@ -322,18 +402,23 @@ fn parse_provider(raw: &str) -> Result<ModelProvider> {
     }
 }
 
-/// Parse the `auth_scheme` config value (`bearer` or `x_api_key`).
+/// Parse the `auth_scheme` config value (`bearer`, `x_api_key`, or `x_goog_api_key`).
 fn parse_auth_scheme(raw: &str) -> Result<xai_grok_sampler::AuthScheme> {
     serde_json::from_value::<xai_grok_sampler::AuthScheme>(serde_json::Value::String(
         raw.trim().to_owned(),
     ))
-    .map_err(|_| anyhow::anyhow!("invalid auth_scheme `{raw}`; expected bearer or x_api_key"))
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "invalid auth_scheme `{raw}`; expected bearer, x_api_key, or x_goog_api_key"
+        )
+    })
 }
 
 fn auth_scheme_as_str(scheme: xai_grok_sampler::AuthScheme) -> &'static str {
     match scheme {
         xai_grok_sampler::AuthScheme::Bearer => "bearer",
         xai_grok_sampler::AuthScheme::XApiKey => "x_api_key",
+        xai_grok_sampler::AuthScheme::XGoogApiKey => "x_goog_api_key",
     }
 }
 
@@ -342,8 +427,9 @@ fn parse_api_backend(raw: &str) -> Result<ApiBackend> {
         "chat_completions" => Ok(ApiBackend::ChatCompletions),
         "responses" => Ok(ApiBackend::Responses),
         "messages" => Ok(ApiBackend::Messages),
+        "google_ai_studio" | "ai_studio" | "gemini" | "google" => Ok(ApiBackend::GoogleAiStudio),
         other => bail!(
-            "invalid api_backend `{other}`; expected chat_completions, responses, or messages"
+            "invalid api_backend `{other}`; expected chat_completions, responses, messages, or google_ai_studio"
         ),
     }
 }
@@ -353,6 +439,7 @@ fn api_backend_as_str(backend: ApiBackend) -> &'static str {
         ApiBackend::ChatCompletions => "chat_completions",
         ApiBackend::Responses => "responses",
         ApiBackend::Messages => "messages",
+        ApiBackend::GoogleAiStudio => "google_ai_studio",
     }
 }
 
@@ -630,5 +717,95 @@ mod tests {
         let json = serde_json::to_value(&public).unwrap();
         assert!(json.get("api_key").is_none());
         assert_eq!(json.get("has_api_key"), Some(&serde_json::json!(true)));
+    }
+
+    #[test]
+    fn codex_experimental_metadata_round_trips_through_the_custom_model_api() {
+        for (use_responses_lite, tools) in [
+            (true, vec!["send_user_message_async", "future_tool"]),
+            (false, Vec::new()),
+        ] {
+            let input = serde_json::json!({
+                "key": "openai:api-test-model",
+                "model": "advertised-api-test-model",
+                "provider": "openai",
+                "base_url": "https://api.openai.com/v1",
+                "api_backend": "responses",
+                "api_key": "test-api-secret",
+                "use_responses_lite": use_responses_lite,
+                "experimental_supported_tools": tools,
+            });
+            let (record, warning) =
+                normalize_custom_model(serde_json::from_value(input).unwrap()).unwrap();
+            assert!(warning.is_none());
+            assert_eq!(record.provider.as_deref(), Some("codex"));
+            let parsed: ConfigModelOverride =
+                TomlValue::Table(record.to_toml_table()).try_into().unwrap();
+            assert_eq!(parsed.use_responses_lite, Some(use_responses_lite));
+            assert_eq!(
+                parsed.experimental_supported_tools,
+                Some(tools.iter().map(|tool| (*tool).to_owned()).collect())
+            );
+            assert_eq!(
+                record.to_override().experimental_supported_tools,
+                parsed.experimental_supported_tools
+            );
+            assert_eq!(
+                record.to_override().use_responses_lite,
+                parsed.use_responses_lite
+            );
+            let public = override_to_public(&record.key, &parsed);
+            assert_eq!(public, record.to_public());
+            let json = serde_json::to_value(public).unwrap();
+            assert_eq!(json["use_responses_lite"], use_responses_lite);
+            assert_eq!(
+                json["experimental_supported_tools"],
+                serde_json::json!(tools)
+            );
+            assert_eq!(json["has_api_key"], true);
+            assert!(json.get("api_key").is_none());
+            assert!(!json.to_string().contains("test-api-secret"));
+        }
+    }
+
+    #[test]
+    fn omitted_codex_experimental_metadata_remains_unspecified() {
+        let record: CustomModelRecord = serde_json::from_value(serde_json::json!({
+            "key": "openai:api-test-model", "model": "advertised-api-test-model",
+        }))
+        .unwrap();
+        let model_override = record.to_override();
+        assert_eq!(model_override.use_responses_lite, None);
+        assert_eq!(model_override.experimental_supported_tools, None);
+        let public =
+            serde_json::to_value(override_to_public(&record.key, &model_override)).unwrap();
+        let table = record.to_toml_table();
+        for field in ["use_responses_lite", "experimental_supported_tools"] {
+            assert!(public.get(field).is_none());
+            assert!(!table.contains_key(field));
+        }
+    }
+
+    #[test]
+    fn google_ai_studio_api_backend_and_auth_scheme_in_custom_models() {
+        let (record, _) = normalize_custom_model(CustomModelRecord {
+            provider: Some("custom".into()),
+            api_backend: Some("google_ai_studio".into()),
+            base_url: Some("https://generativelanguage.googleapis.com/v1beta".into()),
+            api_key: Some("AIzaSyTestKey".into()),
+            ..record("gemini-custom", "gemini-2.5-flash")
+        })
+        .unwrap();
+        assert_eq!(
+            record.to_override().api_backend,
+            Some(ApiBackend::GoogleAiStudio)
+        );
+        assert_eq!(
+            record.to_override().auth_scheme,
+            Some(xai_grok_sampler::AuthScheme::XGoogApiKey)
+        );
+        let public = override_to_public("gemini-custom", &record.to_override());
+        assert_eq!(public.api_backend.as_deref(), Some("google_ai_studio"));
+        assert_eq!(public.auth_scheme.as_deref(), Some("x_goog_api_key"));
     }
 }

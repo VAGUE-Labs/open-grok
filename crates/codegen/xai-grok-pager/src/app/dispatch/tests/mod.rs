@@ -2,6 +2,7 @@
 mod auth;
 mod billing;
 mod cta_e2e;
+mod custom_provider;
 mod dashboard;
 mod jump;
 mod modes;
@@ -313,6 +314,7 @@ fn test_app() -> AppView {
         quit_for_update: false,
         relaunch: None,
         import_claude_modal: None,
+        custom_provider_modal: None,
         welcome_doc_viewer: None,
         screen_mode: crate::app::ScreenMode::Inline,
         pending_screen_mode_switch: None,

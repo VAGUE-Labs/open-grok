@@ -4442,6 +4442,12 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             models,
             custom_models,
         } => {
+            // A custom-provider wizard save rides this lane. Resolve it before
+            // the shared staleness guard: the wizard matches its own save
+            // generation exactly, so a newer unrelated mutation must not strand
+            // the wizard on the checklist waiting for a result that already
+            // arrived.
+            super::custom_provider::note_custom_provider_save(app, generation, &error, &warning);
             if stale || generation < super::settings::setters::current_custom_models_generation() {
                 return vec![];
             }
@@ -4476,6 +4482,13 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             vec![]
         }
+        TaskResult::CustomProviderDiscovered {
+            generation,
+            error,
+            response,
+        } => super::custom_provider::handle_custom_provider_discovered(
+            app, generation, &error, &response,
+        ),
         TaskResult::OpenCodeGoModelsUpdated {
             configured,
             mutation,

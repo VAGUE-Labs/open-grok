@@ -796,6 +796,41 @@ fn custom_models_list_params_models(
         .map(|models| models.unwrap_or_default())
 }
 
+/// Ask the shell to enumerate models at a user-supplied address.
+///
+/// Kept next to `apply_custom_models` so the RPC envelope handling - including
+/// the same `sanitize_user_error` pass - stays in one place. The error string
+/// is meant for the wizard's inline notice, so it must never contain the key.
+async fn discover_custom_models(
+    tx: &AcpAgentTx,
+    params: serde_json::Value,
+) -> Result<crate::views::custom_provider_modal::DiscoverResponse, String> {
+    let request = acp::ExtRequest::new(
+        "open-grok/custom-providers/discover",
+        serde_json::value::to_raw_value(&params)
+            .expect("serialize custom provider discover params")
+            .into(),
+    );
+    let response = acp_send(request, tx)
+        .await
+        .map_err(|error| sanitize_user_error(&format!("{error}")))?;
+    let envelope: serde_json::Value = serde_json::from_str(response.0.get())
+        .map_err(|error| format!("model discovery returned invalid JSON: {error}"))?;
+    if let Some(error) = envelope.get("error").filter(|value| !value.is_null()) {
+        return Err(sanitize_user_error(
+            error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("model discovery failed"),
+        ));
+    }
+    let result = envelope.get("result").unwrap_or(&envelope);
+    serde_json::from_value::<crate::views::custom_provider_modal::DiscoverResponse>(
+        result.clone(),
+    )
+    .map_err(|error| format!("model discovery returned an unexpected shape: {error}"))
+}
+
 async fn list_custom_models(tx: &AcpAgentTx) -> Result<CustomModelsApply, String> {
     let request = acp::ExtRequest::new(
         "open-grok/custom-models/list",
@@ -1656,6 +1691,85 @@ pub(crate) fn execute(
                 }
             });
         }
+        Effect::DiscoverCustomProvider {
+            generation,
+            server_address,
+            format,
+            api_key,
+        } => {
+            // The address is untrusted third-party infrastructure. The pager
+            // forwards the raw string (the shell normalizes and validates it)
+            // and attaches only the key typed for it - never a first-party
+            // credential, never an env lookup, never a second hop.
+            let tx = acp_tx.clone();
+            let params = serde_json::json!({
+                "server_address": server_address,
+                "format": format,
+                "api_key": api_key.as_ref().map(|key| key.expose().to_owned()),
+            });
+            tasks.spawn(async move {
+                match discover_custom_models(&tx, params).await {
+                    Ok(response) => TaskResult::CustomProviderDiscovered {
+                        generation,
+                        error: None,
+                        response: Some(response),
+                    },
+                    Err(error) => TaskResult::CustomProviderDiscovered {
+                        generation,
+                        error: Some(error),
+                        response: None,
+                    },
+                }
+            });
+        }
+        Effect::UpsertCustomModelsMany {
+            generation,
+            api_backend,
+            auth_scheme,
+            base_url,
+            api_key,
+            rows,
+        } => {
+            // Zero selections never reach this arm (dispatch emits no effect),
+            // but an empty batch is a no-op request, so drop it here too.
+            if rows.is_empty() {
+                return (false, meta);
+            }
+            let tx = acp_tx.clone();
+            let params = crate::views::custom_provider_modal::upsert_many_params(
+                &api_backend,
+                &auth_scheme,
+                &base_url,
+                api_key.as_ref().map(|key| key.expose()),
+                &rows,
+            );
+            tasks.spawn(async move {
+                match apply_custom_models(
+                    &tx,
+                    "open-grok/custom-models/upsert-many",
+                    params,
+                )
+                .await
+                {
+                    Ok(applied) => TaskResult::CustomModelsUpdated {
+                        generation,
+                        stale: false,
+                        warning: applied.warning,
+                        error: None,
+                        models: applied.models,
+                        custom_models: applied.custom_models,
+                    },
+                    Err(error) => TaskResult::CustomModelsUpdated {
+                        generation,
+                        stale: false,
+                        warning: None,
+                        error: Some(error),
+                        models: None,
+                        custom_models: Vec::new(),
+                    },
+                }
+            });
+        }
         Effect::UpsertCustomModel {
             generation,
             key,
@@ -1664,6 +1778,7 @@ pub(crate) fn execute(
             provider,
             base_url,
             context_window,
+            max_context_window,
             api_backend,
             env_key,
         } => {
@@ -1682,6 +1797,7 @@ pub(crate) fn execute(
                 if let Some(base_url) = base_url {
                     params["base_url"] = serde_json::Value::String(base_url);
                 }
+                if let Some(max_context_window) = max_context_window { params["max_context_window"] = serde_json::json!(max_context_window); }
                 if let Some(context_window) = context_window {
                     params["context_window"] = serde_json::json!(context_window);
                 }

@@ -2,6 +2,9 @@
 
 Grok connects to custom model endpoints for alternative providers, self-hosted models, and overriding built-in settings. This guide explains how to add models from Settings, select them, configure `[model.*]` endpoints, and integrate third-party providers.
 
+For GPT-6-astra, Codex raw-context overrides, and persistent work, see
+[Codex model controls](26-codex-model-controls.md).
+
 ---
 
 ## Default Models
@@ -58,17 +61,24 @@ default = "grok-4.5"
 
 ## Supported API Backends
 
-Grok supports three API backends. Set `api_backend` in your `[model.*]` config to choose which protocol the model uses:
+Grok supports four API backends. Set `api_backend` in your `[model.*]` config to choose which protocol the model uses:
 
 | Value | API | Default |
 |-------|-----|---------|
 | `"chat_completions"` | OpenAI Chat Completions (`/v1/chat/completions`) | Yes |
 | `"responses"` | OpenAI Responses (`/v1/responses`) | |
 | `"messages"` | Anthropic Messages (`/v1/messages`) | |
+| `"google_ai_studio"` | Google AI Studio REST (`/v1beta/models/{model}:streamGenerateContent`) | |
 
 When you omit `api_backend`, Grok uses `chat_completions`.
 
-To send provider-specific authentication or version headers -- for example, Anthropic's `x-api-key` -- use the `extra_headers` field described below. Grok sends those headers verbatim with every request to the endpoint.
+For Anthropic-style authentication, set `auth_scheme = "x_api_key"` on a
+`provider = "custom"` model instead of hand-writing headers; Open Grok then sends
+`x-api-key` plus `anthropic-version` itself. A `bearer` value (the default) sends
+`Authorization: Bearer <key>`. Google's native backend uses `x-goog-api-key`.
+To send any other provider-specific header, use the `extra_headers` field
+described below; those headers go out verbatim with every request to that
+endpoint.
 
 ---
 
@@ -97,7 +107,7 @@ Fill the draft fields, then turn on **Save custom model**:
 | Catalog key | Table name / catalog key (`[model.<key>]`), for example `zai:glm-special` or `my-ollama`. Letters, digits, `:`, `.`, `-`, and `_` only; no spaces or newlines. |
 | Model id | Wire model id sent to the API. |
 | Name | Optional display name in the picker. |
-| Provider | `(inherit)` (empty) or `zai`, `runinfra`, `gemini`, `wafer`, `kimi`, `fireworks`, `deepseek`, `meta`, `xai`, `opencode_go`, `openrouter`. |
+| Provider | `(inherit)` (empty) or `custom`, `zai`, `runinfra`, `gemini`, `wafer`, `kimi`, `fireworks`, `deepseek`, `meta`, `xai`, `opencode_go`, `openrouter`. `custom` means the base URL you typed is the whole identity of the endpoint; use the wizard below for it. |
 | Base URL | Optional OpenAI-compatible endpoint. Leave blank for Z AI, RunInfra, Google Gemini, Wafer, or OpenRouter to use that provider's default endpoint. |
 | Context window | Token window used for auto-compaction (`1000`–`4000000`; default `200000`). |
 | API backend | `chat_completions` (default), `responses`, or `messages`. |
@@ -108,15 +118,73 @@ either is missing, Open Grok shows a warning and does not write config.
 On success the draft fields clear, the new model appears in the list and
 the model picker, and Settings turns **Save custom model** back off.
 
-When you choose the Z AI provider and omit a base URL, Open Grok stores
+When you choose a provider and omit a base URL, Open Grok stores
 the GLM Coding Plan endpoint (`https://api.z.ai/api/coding/paas/v4`, or
 `OPENGROK_ZAI_API_BASE_URL` if set) and `env_key = "ZAI_API_KEY"`. RunInfra
 does the same with `https://api.runinfra.ai/v1` and `RUNINFRA_GATEWAY_KEY`.
 Google Gemini defaults to
 `https://generativelanguage.googleapis.com/v1beta/openai/` and
 `env_key = "GEMINI_API_KEY"`.
-Wafer does the same with `https://pass.wafer.ai/v1` and `WAFER_API_KEY`. That
-keeps API-key-only providers from inheriting an empty or xAI endpoint.
+Wafer does the same with `https://pass.wafer.ai/v1` and `WAFER_API_KEY`.
+OpenRouter does the same with `https://openrouter.ai/api/v1` and
+`OPENROUTER_API_KEY`. That keeps API-key-only providers from inheriting an
+empty or xAI endpoint.
+
+---
+
+## Custom endpoint wizard (`/provider`)
+
+If you have a server address and nothing else -- a company gateway, a local
+Ollama or vLLM server, a proxy, or an account on any OpenAI- or
+Anthropic-compatible host -- use the guided wizard instead of filling the form
+above. It asks for the address, reads that server's own model list, and writes
+only the models you pick.
+
+```
+/provider
+```
+
+`/provider add`, `/provider new`, `/providers`, and `/custom-provider` all open
+the same wizard. **Settings → Models → Add a custom provider...** opens it too.
+
+| Step | What you do |
+| --- | --- |
+| 1. Server address | Type the base URL, for example `https://gateway.example.com/v1` or `http://localhost:11434`. Open Grok adds `https://` when you leave the scheme off and adds `/v1` when the address has no path. Addresses that carry a user, password, query, or fragment are refused. |
+| 2. API key | Optional. Type the key for **this** server, or press Enter to skip. What you type is masked, never echoed, and never written to logs. Skipping keeps any `env_key` or environment credential for that model working, and works as-is for unauthenticated local servers. |
+| 3. Format | Pick the wire protocol the server speaks: `OpenAI Chat Completions`, `OpenAI Responses`, or `Anthropic Messages`. |
+| 4. Models | Open Grok calls `GET <address>/models` and shows what the server returned. Filter with `/` or plain typing, toggle with Space, toggle everything with `Ctrl+A`. Nothing is written until you press Enter, and pressing Enter with nothing selected saves nothing. |
+| 5. Done | A summary of how many models were written, plus any warning. |
+
+Each selected model becomes its own `[model.<key>]` table. The key is the host
+plus the model id, so one server's models group together and never collide with
+a built-in catalog entry. Open Grok quotes the key because it contains dots:
+
+```toml
+[model."gateway.example.com:claude-sonnet-4"]
+model = "claude-sonnet-4"
+name = "Claude Sonnet 4"
+provider = "custom"
+base_url = "https://gateway.example.com/v1"
+api_backend = "messages"
+auth_scheme = "x_api_key"
+context_window = 200000
+api_key = "sk-..."          # only when you typed a key
+```
+
+- `auth_scheme` decides the credential header: `bearer` sends
+  `Authorization: Bearer <key>`, `x_api_key` sends `x-api-key` plus
+  `anthropic-version`. The wizard sets it from the format you chose; edit it by
+  hand when a gateway wants something else (a LiteLLM-style proxy in front of
+  Anthropic usually wants `bearer`).
+- `provider = "custom"` means the address is yours. Open Grok never sends an
+  xAI, Codex, or other first-party credential to it, and it never follows a
+  redirect with your key attached -- the address you typed must answer
+  directly.
+- Model names and hosts select nothing on their own. The saved `api_backend`
+  and `auth_scheme` decide the protocol and header, so a model called
+  `gpt-5` on your host is still queried with the format you chose.
+- Esc cancels at any step and writes nothing. Shift+Tab (or Left) goes back one
+  step.
 
 ---
 
@@ -244,10 +312,10 @@ When you override a built-in model, Grok starts with the default configuration (
 ### Priority Order
 
 1. Your config (`[model.*]`, including tables written from Settings) -- highest priority
-2. Live provider catalogs (Z AI, RunInfra, Google Gemini, and Wafer `/models`, plus other prefetched `/v1/models` lists)
+2. Live provider catalogs (Z AI, RunInfra, Google Gemini, Wafer, and OpenRouter `/models`, plus other prefetched `/v1/models` lists)
 3. Hardcoded defaults -- lowest priority
 
-A live Z AI, RunInfra, Google Gemini, or Wafer catalog replace rebuilds that provider's picker
+A live Z AI, RunInfra, Google Gemini, Wafer, or OpenRouter catalog replace rebuilds that provider's picker
 entries, then Open Grok re-applies `[model.*]`. Custom models that the
 remote list does not return stay in the catalog, and field overrides on a
 live id (for example a larger `context_window`) win.
@@ -471,6 +539,37 @@ It has no native hosted web search, Responses API, OAuth flow, or xAI-only
 export path. Keep the Gemini API key provider-local; do not use `XAI_API_KEY`
 or an xAI session as a substitute.
 
+### OpenRouter
+
+OpenRouter is an isolated Chat Completions gateway at
+`https://openrouter.ai/api/v1`. Open Grok queries
+`GET /models` for text-input/output, tool-capable models. The
+`openrouter_enabled_models` list is an explicit opt-in allowlist; an empty
+list enables none. Select models in **Settings → Models → OpenRouter models**
+to make them available in the picker and to subagents.
+
+Set `OPENROUTER_API_KEY` (or connect it with `/login openrouter`), enable a
+returned id, and select it. Reasoning menus use only that model's live `supported_efforts`
+array. Models that omit the field have no effort selector. To add an id that
+is not in the live list, use Settings or a `[model.*]` table with
+`provider = "openrouter"`:
+
+```toml
+[model.openrouter-model]
+model = "your-openrouter-model-id"
+name = "OpenRouter model"
+provider = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+api_backend = "chat_completions"
+env_key = "OPENROUTER_API_KEY"
+```
+
+OpenRouter accepts standard client function tools. Chat Completions
+inference sends nested `reasoning: { effort }` and reads thinking tokens from
+stream `delta.reasoning`. It has no native hosted web search, Responses API,
+OAuth flow, or xAI-only export path. Keep the OpenRouter API key
+provider-local; do not use `XAI_API_KEY` or an xAI session as a substitute.
+
 ### Anthropic (Claude)
 
 Use Claude models directly via the Anthropic Messages API:
@@ -487,6 +586,24 @@ extra_headers = { "x-api-key" = "sk-ant-...", "anthropic-version" = "2023-06-01"
 
 The `messages` backend uses the Anthropic Messages protocol. Anthropic authenticates with an `x-api-key` header rather than `Authorization: Bearer`, so pass your key through `extra_headers`, which Grok sends verbatim.
 
+### Google AI Studio (Gemini Native REST)
+
+Use Google's native AI Studio endpoint (`streamGenerateContent` and `generateContent`):
+
+```toml
+[model.gemini-2-5-pro]
+model = "gemini-2.5-pro"
+base_url = "https://generativelanguage.googleapis.com/v1beta"
+name = "Gemini 2.5 Pro (Native)"
+api_backend = "google_ai_studio"
+auth_scheme = "x_goog_api_key"
+api_key = "AIzaSy..."
+# or env_key = "GEMINI_API_KEY"
+context_window = 1048576
+```
+
+The `google_ai_studio` backend uses Google's native Gemini REST wire protocol rather than OpenAI compatibility mode. It supports thinking tokens, function calling, and passes API keys via the `x-goog-api-key` header.
+
 ### OpenAI (Chat Completions)
 
 ```toml
@@ -500,6 +617,9 @@ env_key = "OPENAI_API_KEY"
 `api_backend` defaults to `"chat_completions"`, so you don't need to set it explicitly for OpenAI.
 
 ### OpenAI (Responses API)
+
+For GPT-6 Astra with async user messages, see
+[Async messages on the OpenAI API](26-codex-model-controls.md#async-messages-on-the-openai-api).
 
 If your provider supports the newer Responses API:
 
