@@ -853,6 +853,12 @@ pub(crate) struct SessionActor {
     pub(crate) rewind_pending_prompt: std::sync::Mutex<Option<String>>,
     /// Startup hints for the session: currently responsible for customizing the user message prefix and the git status mode (fast no untracked for non-interactive mode)
     pub(crate) startup_hints: StartupHints,
+    /// Skip starting the project-discovery filesystem watcher in
+    /// `run_session`. Test harnesses set this: creating an FSEvents stream
+    /// synchronously blocks on `fseventsd`, whose latency tracks unrelated
+    /// machine I/O and can blow tests' internal deadlines. No test depends
+    /// on the watcher; production leaves it off (watchers stay enabled).
+    pub(crate) disable_project_discovery_watcher: bool,
     /// Delivery-tool names for the CURRENT attachment, seeded from the spawn
     /// `startupHints.deliveryTools` and re-applied when a resident
     /// `session/load` carries explicit hints (`UpdateAttachPolicy`). Kept

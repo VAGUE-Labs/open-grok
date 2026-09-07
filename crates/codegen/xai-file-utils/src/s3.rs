@@ -102,6 +102,29 @@ pub(crate) async fn build_s3_client(
     credentials_file: Option<&str>,
     endpoint_url: Option<&str>,
 ) -> anyhow::Result<aws_sdk_s3::Client> {
+    build_s3_client_with_tls(
+        region,
+        credentials_content,
+        credentials_file,
+        endpoint_url,
+        None,
+    )
+    .await
+}
+
+/// Like [`build_s3_client`], with an optional TLS trust context. `None` keeps
+/// the smithy default (platform native roots) in production; inside this
+/// crate's test binaries the default is swapped for a root-free context (see
+/// [`test_default_tls_context`]).
+async fn build_s3_client_with_tls(
+    region: &str,
+    credentials_content: Option<&str>,
+    credentials_file: Option<&str>,
+    endpoint_url: Option<&str>,
+    tls_context: Option<aws_smithy_http_client::tls::TlsContext>,
+) -> anyhow::Result<aws_sdk_s3::Client> {
+    #[cfg(test)]
+    let tls_context = tls_context.or_else(test_default_tls_context);
     let proxy_config = aws_smithy_http_client::proxy::ProxyConfig::from_env();
     let http_client = aws_smithy_http_client::Builder::new().build_with_connector_fn(
         move |settings, _runtime_components| {
@@ -110,11 +133,13 @@ pub(crate) async fn build_s3_client(
             if let Some(s) = settings {
                 builder.set_connector_settings(Some(s.clone()));
             }
-            builder
-                .tls_provider(aws_smithy_http_client::tls::Provider::Rustls(
-                    aws_smithy_http_client::tls::rustls_provider::CryptoMode::Ring,
-                ))
-                .build()
+            let mut builder = builder.tls_provider(aws_smithy_http_client::tls::Provider::Rustls(
+                aws_smithy_http_client::tls::rustls_provider::CryptoMode::Ring,
+            ));
+            if let Some(ctx) = tls_context.clone() {
+                builder = builder.tls_context(ctx);
+            }
+            builder.build()
         },
     );
 
@@ -495,6 +520,26 @@ pub struct S3StorageClient {
 }
 
 #[allow(dead_code)] // Used once the S3 storage backend is wired up.
+/// Test-binary default TLS context: no native roots, no custom certs.
+///
+/// The S3 tests talk to plaintext loopback endpoints, so the OS trust store
+/// is never needed — while loading it is slow on some hosts and can
+/// intermittently parse zero certificates, after which aws-smithy-http-client
+/// caches the empty result and panics on every subsequent client build in
+/// debug profiles. Opt-in integration tests against real HTTPS endpoints can
+/// still pass an explicit TLS context through [`build_s3_client_with_tls`].
+#[cfg(test)]
+fn test_default_tls_context() -> Option<aws_smithy_http_client::tls::TlsContext> {
+    Some(
+        aws_smithy_http_client::tls::TlsContext::builder()
+            .with_trust_store(
+                aws_smithy_http_client::tls::TrustStore::empty().with_native_roots(false),
+            )
+            .build()
+            .expect("root-free TLS context"),
+    )
+}
+
 impl S3StorageClient {
     pub fn bucket_name(&self) -> &str {
         &self.bucket

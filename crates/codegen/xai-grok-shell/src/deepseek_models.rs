@@ -154,14 +154,14 @@ impl DeepSeekModelsCatalog {
 
 #[derive(Clone, Debug)]
 pub(crate) struct DeepSeekModelsClient {
-    http: reqwest::Client,
+    http: crate::lazy_http::LazyHttpClient,
     base_url: String,
 }
 
 impl DeepSeekModelsClient {
     pub(crate) fn new() -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::lazy_http::LazyHttpClient::new(),
             base_url: api_base_url(),
         }
     }
@@ -169,7 +169,7 @@ impl DeepSeekModelsClient {
     #[cfg(test)]
     fn with_base_url(base_url: impl Into<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::lazy_http::LazyHttpClient::new(),
             base_url: base_url.into(),
         }
     }
@@ -198,6 +198,7 @@ impl DeepSeekModelsClient {
         let url = format!("{}/models", self.base_url.trim_end_matches('/'));
         let response = self
             .http
+            .client()
             .get(&url)
             .timeout(DEEPSEEK_MODELS_REQUEST_TIMEOUT)
             .bearer_auth(api_key)

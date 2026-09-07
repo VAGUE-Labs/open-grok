@@ -333,21 +333,9 @@ fn setting_row_visible_gates_voice_capture_on_key_releases() {
     let voice = meta_for(&reg, "voice_capture_mode");
     let vim = meta_for(&reg, "vim_mode");
     // voice_mode = true; kitty_releases varies.
-    assert!(!setting_row_visible(voice, false, false, true, true));
-    assert!(setting_row_visible(voice, true, false, true, true));
-    assert!(setting_row_visible(vim, false, false, true, true));
-}
-
-/// The `antigravity_subagents` row is hidden without the CLI installed and
-/// shown with it. Other settings are unaffected by the gate.
-#[test]
-fn setting_row_visible_gates_antigravity_on_cli_presence() {
-    let reg = SettingsRegistry::defaults();
-    let antigravity = meta_for(&reg, "antigravity_subagents");
-    let vim = meta_for(&reg, "vim_mode");
-    assert!(!setting_row_visible(antigravity, true, false, true, false));
-    assert!(setting_row_visible(antigravity, true, false, true, true));
-    assert!(setting_row_visible(vim, true, false, true, false));
+    assert!(!setting_row_visible(voice, false, false, true));
+    assert!(setting_row_visible(voice, true, false, true));
+    assert!(setting_row_visible(vim, false, false, true));
 }
 
 #[test]
@@ -358,47 +346,17 @@ fn setting_row_visible_hides_voice_rows_when_voice_mode_off() {
     let language = meta_for(&reg, "voice_stt_language");
     let vim = meta_for(&reg, "vim_mode");
     // Gate off: all voice rows gone even with kitty releases + full TUI.
-    assert!(!setting_row_visible(keybind, true, false, false, true));
-    assert!(!setting_row_visible(capture, true, false, false, true));
-    assert!(!setting_row_visible(language, true, false, false, true));
+    assert!(!setting_row_visible(keybind, true, false, false));
+    assert!(!setting_row_visible(capture, true, false, false));
+    assert!(!setting_row_visible(language, true, false, false));
     // Non-voice rows unaffected.
-    assert!(setting_row_visible(vim, true, false, false, true));
+    assert!(setting_row_visible(vim, true, false, false));
     // Gate on: all visible (kitty releases for capture).
-    assert!(setting_row_visible(keybind, true, false, true, true));
-    assert!(setting_row_visible(capture, true, false, true, true));
-    assert!(setting_row_visible(language, true, false, true, true));
+    assert!(setting_row_visible(keybind, true, false, true));
+    assert!(setting_row_visible(capture, true, false, true));
+    assert!(setting_row_visible(language, true, false, true));
     // The keybind row (unlike capture) doesn't need key-release reporting.
-    assert!(setting_row_visible(keybind, false, false, true, true));
-}
-
-#[test]
-fn rebuild_rows_drops_antigravity_row_when_cli_absent() {
-    let prev = crate::app::antigravity_cli_present();
-    crate::app::set_antigravity_cli_present_for_test(true);
-    let mut state = make_state();
-    let has_antigravity = |s: &SettingsModalState| {
-        s.rows.iter().any(|r| {
-            matches!(
-                r,
-                RowEntry::Setting {
-                    key: "antigravity_subagents",
-                    ..
-                }
-            )
-        })
-    };
-    assert!(
-        has_antigravity(&state),
-        "antigravity_subagents should be listed with the CLI present"
-    );
-
-    crate::app::set_antigravity_cli_present_for_test(false);
-    state.rebuild_rows();
-    assert!(
-        !has_antigravity(&state),
-        "rebuild after CLI-absent must hide antigravity_subagents"
-    );
-    crate::app::set_antigravity_cli_present_for_test(prev);
+    assert!(setting_row_visible(keybind, false, false, true));
 }
 
 #[test]
@@ -443,17 +401,16 @@ fn setting_row_visible_hides_theme_rows_in_minimal() {
         let meta = meta_for(&reg, key);
         assert!(meta.hidden_in_minimal, "{key} must declare the flag");
         assert!(
-            !setting_row_visible(meta, true, true, true, true),
+            !setting_row_visible(meta, true, true, true),
             "{key} in minimal"
         );
         assert!(
-            setting_row_visible(meta, true, false, true, true),
+            setting_row_visible(meta, true, false, true),
             "{key} in full TUI"
         );
     }
     assert!(setting_row_visible(
         meta_for(&reg, "vim_mode"),
-        true,
         true,
         true,
         true
@@ -754,15 +711,21 @@ fn save_custom_model_with_empty_id_or_slug_does_not_dispatch_upsert() {
     focus_setting(&mut s, "custom_models");
     let entered = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(matches!(entered, SettingsKeyOutcome::Changed));
-    // last child is Save custom model
-    for _ in 0..20 {
+    // Walk to the Save toggle by key — the sub-sheet's child list grows with
+    // new draft fields (e.g. the custom-provider wizard trigger), so a
+    // hardcoded index goes stale.
+    let save_idx = group_children(&s, "custom_models")
+        .iter()
+        .position(|key| *key == "custom_model_save")
+        .expect("custom_model_save is a custom_models child");
+    for _ in 0..30 {
         let _ = handle_settings_key(
             &mut s,
             &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
         );
         if matches!(
             s.mode(),
-            SettingsModalMode::PickingGroup { child_idx: 9, .. }
+            SettingsModalMode::PickingGroup { child_idx, .. } if child_idx == save_idx
         ) {
             break;
         }
@@ -888,14 +851,14 @@ fn default_registry_contains_meta_api_key_secret() {
     assert!(matches!(meta.kind, SettingKind::Secret));
 }
 
-/// Exhaustive visible-row contract for the default (non-minimal, voice-off,
-/// no-antigravity) settings modal. Pins category headers and every top-level
+/// Exhaustive visible-row contract for the default (non-minimal, voice-off)
+/// settings modal. Pins category headers and every top-level
 /// setting key in registry order, including Open Grok provider/Code Mode
 /// rows and Advanced opt-in feature flags (telemetry, web_fetch localhost,
 /// remember-mode, crash handler, mouse reporting toggle, shell/AI
 /// suggestions, sandbox auto-allow bash, respect gitignore).
 /// `default_reasoning_effort` and `auto_compact_threshold_percent` stay
-/// unexposed; voice and antigravity rows stay gated out of this fixture.
+/// unexposed; voice rows stay gated out of this fixture.
 #[test]
 fn rows_contain_categories_and_settings_through_pr_14() {
     let prev_voice = crate::app::voice_mode_enabled();
@@ -1006,6 +969,9 @@ fn rows_contain_categories_and_settings_through_pr_14() {
             // SHELL-owned remember_tool_approvals (Agent category,
             // registered right after permission_mode).
             "remember_tool_approvals",
+            // SHELL-owned Codex session controls (Agent category).
+            "codex_persistent_mode",
+            "codex_guardian_review",
             // SHELL-owned code_mode (Agent category, restart-required).
             "code_mode",
             // SHELL-owned default_selected_permission (Agent category,
@@ -1086,6 +1052,7 @@ fn rows_contain_categories_and_settings_through_pr_14() {
             "features.web_fetch",
             "toolset.web_fetch.allow_local",
             "features.two_pass_compaction",
+            "features.context_management.experimental_mode",
             "features.non_git_warning",
             "features.remember_mode",
             "doom_loop_recovery.enabled",

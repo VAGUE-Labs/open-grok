@@ -1270,37 +1270,6 @@ pub(in crate::app::dispatch) fn set_local_feature_flag(
     }]
 }
 
-/// Commit `[antigravity].skip_permissions` — the full-access opt-out for agy
-/// subagents (registry-driven path).
-///
-/// SHELL-OWNED with NO in-memory pager mirror (like `web_search_source` /
-/// `x_search`): persisted via `Effect::PersistSetting`; the modal reads it
-/// back fresh from disk (`load_antigravity_skip_permissions_sync`) at snapshot
-/// time. Restart-required — the antigravity runner resolves the flag at
-/// subagent spawn.
-pub(in crate::app::dispatch) fn set_antigravity_skip_permissions(
-    app: &mut AppView,
-    new: bool,
-) -> Vec<Effect> {
-    let prev = xai_grok_shell::util::config::load_antigravity_skip_permissions_sync();
-    refresh_open_settings_modals(app);
-    tracing::info!(
-        target: "settings",
-        key = "antigravity_skip_permissions",
-        value = new,
-        "setting changed",
-    );
-    app.show_toast(&format!(
-        "{} (restart to apply)",
-        save_success_toast("Antigravity full access", new),
-    ));
-    vec![Effect::PersistSetting {
-        key: "antigravity_skip_permissions",
-        value: crate::settings::SettingValue::Bool(new),
-        rollback_value: crate::settings::SettingValue::Bool(prev),
-    }]
-}
-
 /// Set vim-mode scrollback keybindings (registry-driven path).
 ///
 /// SHELL-OWNED: persisted to `[ui].vim_mode` in config.toml via
@@ -3481,42 +3450,6 @@ pub(in crate::app::dispatch) fn set_auto_update(app: &mut AppView, new: bool) ->
     ));
     vec![Effect::PersistSetting {
         key: "auto_update",
-        value: crate::settings::SettingValue::Bool(new),
-        rollback_value: crate::settings::SettingValue::Bool(prev_effective),
-    }]
-}
-
-// ---------------------------------------------------------------------------
-// antigravity_subagents — SHELL-OWNED `Option<bool>` on
-// `[ui].antigravity_subagents`. Restart-required (the shell resolves the
-// Antigravity roster once at startup). The row itself is hidden when the
-// `agy` binary is absent, so this setter only fires with the CLI installed.
-// ---------------------------------------------------------------------------
-
-/// State-only mutation for `antigravity_subagents`.
-pub(super) fn set_antigravity_subagents_inner(app: &mut AppView, value: bool) {
-    app.current_ui.antigravity_subagents = Some(value);
-}
-
-/// Outer dispatcher for `Action::SetAntigravitySubagents`.
-pub(in crate::app::dispatch) fn set_antigravity_subagents(
-    app: &mut AppView,
-    new: bool,
-) -> Vec<Effect> {
-    let prev_state = app.current_ui.antigravity_subagents;
-    let prev_effective = prev_state.unwrap_or(false);
-    if prev_effective == new && prev_state.is_some() {
-        return vec![];
-    }
-    set_antigravity_subagents_inner(app, new);
-    refresh_open_settings_modals(app);
-    tracing::info!(target: "settings", key = "antigravity_subagents", value = new, "setting changed");
-    app.show_toast(&format!(
-        "{} (restart to apply)",
-        save_success_toast("Antigravity subagents", new),
-    ));
-    vec![Effect::PersistSetting {
-        key: "antigravity_subagents",
         value: crate::settings::SettingValue::Bool(new),
         rollback_value: crate::settings::SettingValue::Bool(prev_effective),
     }]

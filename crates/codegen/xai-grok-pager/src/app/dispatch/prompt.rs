@@ -656,8 +656,6 @@ pub(super) fn dispatch_send_prompt_inner(
                     web_search_source: xai_grok_shell::util::config::load_web_search_source_sync(),
                     x_search_enabled: xai_grok_shell::util::config::load_x_search_config_sync()
                         .enabled,
-                    antigravity_skip_permissions:
-                        xai_grok_shell::util::config::load_antigravity_skip_permissions_sync(),
                     perplexity_api_key_status:
                         crate::app::dispatch::settings::ui::perplexity_api_key_status(),
                     kimi_api_endpoint: app.kimi_api_endpoint.clone(),

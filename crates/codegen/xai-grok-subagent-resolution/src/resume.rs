@@ -90,7 +90,6 @@ mod tests {
             worktree_path: None,
             snapshot_ref: None,
             child_session_id: "child-session".into(),
-            antigravity_conversation_id: None,
         }
     }
 

@@ -246,14 +246,6 @@ pub async fn set_x_search_enabled(value: bool) -> Result<()> {
     update_config(|cfg| cfg.x_search.enabled = value).await
 }
 
-/// Persist `[antigravity].skip_permissions` via `update_config`. The runner
-/// resolves `unwrap_or(true)`, so `Some(false)` is the explicit opt-out that
-/// forces read-only agy subagents; `Some(true)` restores the full-access
-/// default. Read back by `load_antigravity_skip_permissions_sync`.
-pub async fn set_antigravity_skip_permissions(value: bool) -> Result<()> {
-    update_config(|cfg| cfg.antigravity.skip_permissions = Some(value)).await
-}
-
 // Settings helpers — typed disk-write wrappers for each setting.
 // All route through `update_config` → `merge_section` → `save_config`.
 // ---------------------------------------------------------------------------
@@ -387,12 +379,6 @@ pub async fn set_simple_mode(value: bool) -> Result<()> {
 /// so explicit settings changes are stored as `Some(value)`.
 pub async fn set_swarm_mode(value: bool) -> Result<()> {
     update_config(|cfg| cfg.ui.swarm_mode = Some(value)).await
-}
-
-/// Persist `[ui].antigravity_subagents` via `update_config`. Same `Option<bool>`
-/// shape as `swarm_mode` (`None` = default off).
-pub async fn set_antigravity_subagents(value: bool) -> Result<()> {
-    update_config(|cfg| cfg.ui.antigravity_subagents = Some(value)).await
 }
 
 /// Persist `[ui.contextual_hints].undo` via `update_config`. The nested struct

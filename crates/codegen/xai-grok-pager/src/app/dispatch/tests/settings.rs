@@ -1296,19 +1296,17 @@ fn every_setting_has_action_for_reset_arm() {
                 || matches!(meta.kind, crate::settings::SettingKind::Secret { .. })
                 || meta.key.starts_with("toolset.web_search_source.")
                 || meta.key == "toolset.x_search.enabled"
-                || meta.key == "antigravity_skip_permissions"
                 || crate::settings::is_local_feature_flag(meta.key)
             {
                 // Secret values intentionally are not read into AppView/test
                 // fixtures. The action-arm assertion above covers reset wiring;
                 // credential storage round trips have dedicated auth tests.
                 //
-                // The `[toolset.web_search_source]` per-provider selectors,
-                // `[toolset.x_search].enabled`, and `[antigravity]`
-                // skip_permissions are SHELL-owned and read straight back from
-                // the effective config on disk (`load_web_search_source_sync` /
-                // `load_x_search_config_sync` /
-                // `load_antigravity_skip_permissions_sync`) with NO in-memory
+                // The `[toolset.web_search_source]` per-provider selectors
+                // and `[toolset.x_search].enabled` are SHELL-owned and read
+                // straight back from the effective config on disk
+                // (`load_web_search_source_sync` / `load_x_search_config_sync`)
+                // with NO in-memory
                 // mirror — unlike every other setter, which
                 // mutates AppView / the appearance cache synchronously. This
                 // effect-less dispatch harness never runs the `PersistSetting`
@@ -1958,14 +1956,6 @@ fn move_setting_away_from_default(app: &mut AppView, key: crate::settings::Setti
         }
         "display_refresh_auto_cadence" => {
             let _ = dispatch(Action::SetDisplayRefreshAutoCadence(true), app);
-        }
-        "antigravity_subagents" => {
-            let _ = dispatch(Action::SetAntigravitySubagents(true), app);
-        }
-        "antigravity_skip_permissions" => {
-            // Effective default is full access (true); the read-only opt-out
-            // (false) is the non-default direction.
-            let _ = dispatch(Action::SetAntigravitySkipPermissions(false), app);
         }
         "scroll_lines" => {
             let _ = dispatch(Action::SetScrollLines(5), app);

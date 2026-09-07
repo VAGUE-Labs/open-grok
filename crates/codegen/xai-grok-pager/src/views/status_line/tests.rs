@@ -64,16 +64,25 @@ fn carriage_return_takes_no_column_so_nothing_is_elided() {
 fn text_the_script_did_not_colour_is_muted_and_never_blinks() {
     let theme = Theme::tokyonight();
     let (buf, _) = render("\x1b[32mX\x1b[0mY", Rect::new(0, 0, 10, 1), 0);
+    // `themed` runs every colour through `quantize`, so under a colourless
+    // terminal (NO_COLOR / TERM=dumb) every fg collapses to Reset. Compare
+    // against the same quantized expectation to stay deterministic in any
+    // environment.
+    let muted_fg = theme.muted().fg.map(xai_grok_pager_render::theme::quantize);
     assert_eq!(
         buf[(1, 0)].style().fg,
-        theme.muted().fg,
+        muted_fg,
         "the row is chrome, but not quieter than the hints below it"
     );
-    assert_ne!(
-        buf[(0, 0)].style().fg,
-        theme.muted().fg,
-        "a colour the script asked for has to survive"
-    );
+    // The "script colour survives" contrast is only observable when the
+    // terminal has colour at all.
+    if xai_grok_pager_render::theme::color_support::get().has_color() {
+        assert_ne!(
+            buf[(0, 0)].style().fg,
+            muted_fg,
+            "a colour the script asked for has to survive"
+        );
+    }
 
     let (buf, _) = render("\x1b[5mtick\x1b[8mhidden", Rect::new(0, 0, 20, 1), 0);
     let modifiers = buf[(0, 0)].style().add_modifier | buf[(5, 0)].style().add_modifier;

@@ -289,18 +289,23 @@ mod tests {
     #[tokio::test]
     #[cfg(unix)]
     async fn test_timeout_kills_grandchildren_and_returns_promptly() {
-        let mut request = make_request("sleep 5 & echo bgpid=$!; sleep 5");
-        request.timeout = std::time::Duration::from_millis(1000);
+        // The runner invokes a login shell, whose init files can take seconds
+        // on developer machines (version managers, prompts). The timeout must
+        // comfortably exceed that startup so `bgpid=` is reliably echoed (and
+        // captured) before the kill; CI's minimal shells are far faster.
+        let mut request = make_request("sleep 30 & echo bgpid=$!; sleep 30");
+        request.timeout = std::time::Duration::from_millis(3000);
 
         let started = std::time::Instant::now();
         let result = LocalTerminalRunner.run(request).await.unwrap();
 
         assert!(result.timed_out, "run should report the timeout");
-        // Prompt return: request timeout (0.3s) + pipe EOF from the group
-        // kill (normally instant; KILL_REAP_TIMEOUT-bounded worst case) —
-        // anything near the 5s sleeps means we waited for the grandchild.
+        // Prompt return: request timeout + pipe EOF from the group kill
+        // (normally instant; KILL_REAP_TIMEOUT-bounded worst case) — waiting
+        // for the killed tree instead would cost the full reap bound on top
+        // of the timeout and blow past this window.
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(4),
+            started.elapsed() < std::time::Duration::from_millis(4500),
             "timeout path must not wait for the killed tree (took {:?})",
             started.elapsed()
         );

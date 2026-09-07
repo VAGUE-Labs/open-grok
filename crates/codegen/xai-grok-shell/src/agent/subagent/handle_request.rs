@@ -23,12 +23,6 @@ pub(super) fn task_model_override_error(
         return None;
     }
     let requested = requested?;
-    if crate::agent::antigravity::is_antigravity_slug(requested) {
-        // `antigravity:*` slugs bypass the HTTP model catalog; the
-        // antigravity dispatch branch performs the authoritative async
-        // checks (feature toggle, binary, sign-in, roster).
-        return None;
-    }
     crate::agent::models::task_model_error_for_catalog_with_provider_auth(
         requested,
         available,
@@ -204,7 +198,6 @@ pub(crate) async fn run_shell_child(
                         persona: info.persona,
                         model_id: info.model_id,
                         model_route: None,
-                        antigravity_conversation_id: None,
                     }),
             ),
             SubagentResumeLookup::Missing => {
@@ -318,8 +311,8 @@ pub(crate) async fn run_shell_child(
             }
             SubagentResumeLookup::Completed(info) => Some(
                 // Prefer the durable meta.json: it carries the fork's
-                // provider-pinned model_route and the Antigravity
-                // conversation id, which the in-memory registry does not.
+                // provider-pinned model_route, which the in-memory
+                // registry does not.
                 load_resume_source(resume_id, &ctx.parent_session_id, &ctx.parent_cwd)
                     .await
                     .unwrap_or_else(|| ResumeSourceData {
@@ -332,7 +325,6 @@ pub(crate) async fn run_shell_child(
                         persona: info.persona,
                         model_id: info.model_id,
                         model_route: None,
-                        antigravity_conversation_id: None,
                     }),
             ),
             SubagentResumeLookup::Missing => {
@@ -552,43 +544,6 @@ pub(crate) async fn run_shell_child(
         request.owner.is_workflow(),
         &request.id,
     );
-    // ── Antigravity dispatch ────────────────────────────────────────────
-    // `antigravity:*` models run out-of-process via the Antigravity CLI:
-    // no child session, no SamplingClient. A resumed antigravity source
-    // routes here through its stored model id (overrides are cleared on
-    // resume above, mirroring the HTTP path's model pinning).
-    let antigravity_model = effective_runtime
-        .model
-        .as_deref()
-        .and_then(crate::agent::antigravity::strip_model_prefix)
-        .map(str::to_string)
-        .or_else(|| {
-            resume_source.as_ref().and_then(|source| {
-                source
-                    .model_id
-                    .as_deref()
-                    .and_then(crate::agent::antigravity::strip_model_prefix)
-                    .map(str::to_string)
-            })
-        });
-    if let Some(agy_model) = antigravity_model {
-        return super::antigravity_runner::run_antigravity_subagent(
-            super::antigravity_runner::AntigravityLaunch {
-                request,
-                agy_model,
-                effective_runtime: &effective_runtime,
-                resume_source: resume_source.as_ref(),
-                worktree_path,
-                worktree_freshly_created,
-                cancel_token: cancel_token.clone(),
-                start,
-            },
-            &ctx,
-            gateway,
-            completion_data,
-        )
-        .await;
-    }
     let (mut effective_sampling_config, mut effective_model_id) = resolve_effective_model_config(
         effective_runtime.model.as_deref(),
         &request.subagent_type,
@@ -894,7 +849,6 @@ pub(crate) async fn run_shell_child(
         snapshot_ref: None,
         effective_model_id: Some(effective_model_id.0.to_string()),
         model_route: meta_model_route,
-        antigravity_conversation_id: None,
     };
     let child_allows_xai_export = effective_sampling_config
         .provider

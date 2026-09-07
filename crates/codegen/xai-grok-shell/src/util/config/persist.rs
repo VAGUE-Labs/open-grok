@@ -48,10 +48,6 @@ async fn save_config_locked(config: &Config) -> Result<()> {
     merge_section(table, "ui", &config.ui);
     merge_section(table, "harness", &config.harness);
     merge_section(table, "session", &config.session);
-    // `[antigravity]` carries the settings-writable `skip_permissions` opt-out.
-    // `merge_section` no-ops on an all-`None` (empty) serialization, so configs
-    // that never touch the section stay untouched.
-    merge_section(table, "antigravity", &config.antigravity);
     merge_ask_user_question_section(table, &config.ask_user_question);
     merge_perplexity_web_search_section(table, &config.perplexity_web_search);
     merge_toolset_subsection(table, "web_search_source", &config.web_search_source);
@@ -506,49 +502,6 @@ mod tests {
             "existing selections survive a settings write"
         );
         assert!(!reparsed.x_search.enabled);
-    }
-
-    /// The `[antigravity]` opt-out round-trips through `merge_section` and
-    /// preserves a hand-written `binary` sibling. `merge_section` is what
-    /// `set_antigravity_skip_permissions` relies on in `save_config_locked`.
-    #[test]
-    fn antigravity_skip_permissions_round_trips_and_preserves_binary() {
-        let root_val: TomlValue = toml::from_str("[antigravity]\nbinary = \"/opt/agy\"\n").unwrap();
-        let mut config = crate::util::config::load_config_from_toml(&root_val);
-        assert_eq!(config.antigravity.skip_permissions, None);
-        assert_eq!(config.antigravity.binary.as_deref(), Some("/opt/agy"));
-
-        config.antigravity.skip_permissions = Some(false);
-        let mut root = root_val.as_table().unwrap().clone();
-        merge_section(&mut root, "antigravity", &config.antigravity);
-
-        let reparsed = crate::util::config::load_config_from_toml(&TomlValue::Table(root));
-        assert_eq!(
-            reparsed.antigravity.skip_permissions,
-            Some(false),
-            "the opt-out must survive the settings write"
-        );
-        assert_eq!(
-            reparsed.antigravity.binary.as_deref(),
-            Some("/opt/agy"),
-            "a hand-set [antigravity] binary must survive the settings write"
-        );
-    }
-
-    /// An all-`None` `[antigravity]` serializes to an empty table, so
-    /// `merge_section` must leave the file untouched (no empty header).
-    #[test]
-    fn antigravity_all_none_does_not_create_empty_section() {
-        let mut root: TomlMap<String, TomlValue> = TomlMap::new();
-        merge_section(
-            &mut root,
-            "antigravity",
-            &crate::agent::config::AntigravityConfig::default(),
-        );
-        assert!(
-            root.get("antigravity").is_none(),
-            "all-None [antigravity] must not create an empty section"
-        );
     }
 
     #[test]

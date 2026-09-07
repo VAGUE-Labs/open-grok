@@ -458,12 +458,22 @@ fn lock_api_key_store(path: &Path) -> std::io::Result<AuthFileLock> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    super::manager::lock::try_lock_auth_file_nonblocking(path).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::WouldBlock,
-            "auth.json is being updated by another process; try again",
-        )
-    })
+    // Bounded retry: an immediately-released lock can still read as held for
+    // a moment (the releasing guard joins a heartbeat thread), and parallel
+    // tests sharing a home transiently contend. Real cross-process writers
+    // still fail fast after the short window.
+    for attempt in 0..50 {
+        if let Some(lock) = super::manager::lock::try_lock_auth_file_nonblocking(path) {
+            return Ok(lock);
+        }
+        if attempt < 49 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::WouldBlock,
+        "auth.json is being updated by another process; try again",
+    ))
 }
 
 fn store_scoped_api_key(grok_home: &Path, scope: &str, api_key: &str) -> std::io::Result<()> {

@@ -118,6 +118,7 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
         file_state_tracker: Arc::new(FileStateTracker::new()),
         rewind_pending_prompt: std::sync::Mutex::new(None),
         startup_hints: StartupHints::default(),
+        disable_project_discovery_watcher: true,
         forked_tool_override: None,
         compaction: crate::session::compaction_config::CompactionConfig {
             threshold_percent: std::cell::Cell::new(85),

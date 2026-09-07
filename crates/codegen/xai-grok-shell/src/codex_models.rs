@@ -363,7 +363,11 @@ impl CodexModelsAuthSource for ProductionCodexModelsAuthSource {
 /// Provider-owned Codex `/models` transport and cache policy.
 #[derive(Clone, Debug)]
 pub(crate) struct CodexModelsClient {
-    http: reqwest::Client,
+    /// Built on first use. Constructing a `reqwest::Client` loads the OS
+    /// trust store, which on macOS can take seconds and intermittently
+    /// races the session-actor construction deadlines in tests that never
+    /// touch the network; real fetches still get full native roots.
+    http: crate::lazy_http::LazyHttpClient,
     cache_path: PathBuf,
     base_url: String,
     open_grok_version: String,
@@ -375,7 +379,7 @@ pub(crate) struct CodexModelsClient {
 impl CodexModelsClient {
     pub(crate) fn new() -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::lazy_http::LazyHttpClient::new(),
             cache_path: crate::util::grok_home::grok_home().join(CODEX_MODELS_CACHE_FILE),
             base_url: codex_auth::inference_base_url(),
             open_grok_version: xai_grok_version::version().to_owned(),
@@ -535,6 +539,7 @@ impl CodexModelsClient {
         let url = self.models_url().map_err(CodexModelsRequestError::Other)?;
         let mut request = self
             .http
+            .client()
             .get(url)
             .timeout(CODEX_MODELS_REQUEST_TIMEOUT)
             .bearer_auth(&credentials.access_token)
@@ -896,7 +901,7 @@ impl CodexModelsClient {
         auth: Arc<dyn CodexModelsAuthSource>,
     ) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::lazy_http::LazyHttpClient::new(),
             cache_path,
             base_url,
             open_grok_version: "test-open-grok".to_owned(),

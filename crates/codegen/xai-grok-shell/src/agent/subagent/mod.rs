@@ -46,7 +46,6 @@ use xai_grok_tools::implementations::grok_build::task::types::*;
 use xai_grok_tools::types::tool::ToolKind;
 use xai_grok_workspace::file_system::AsyncFileSystem;
 use xai_hunk_tracker::HunkTrackerHandle;
-mod antigravity_runner;
 mod attempt_runner;
 mod child_runtime;
 mod handle_request;
@@ -2160,7 +2159,6 @@ fn durable_resume_source_for(
         persona: meta.persona,
         model_id: meta.effective_model_id,
         model_route: meta.model_route,
-        antigravity_conversation_id: meta.antigravity_conversation_id,
     })
 }
 /// Resolve the MCP pool a child subagent should import from its parent.
@@ -3324,10 +3322,6 @@ pub(crate) struct SubagentMeta {
     /// resume can retain provider identity even when slugs overlap.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_route: Option<xai_grok_subagent_resolution::SubagentModelRoute>,
-    /// Antigravity CLI conversation id (only for `antigravity:*` models).
-    /// Persisted so `resume_from` can continue the CLI conversation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub antigravity_conversation_id: Option<String>,
 }
 /// Canonical subagent metadata for GCS persistence (`subagent.json`).
 ///

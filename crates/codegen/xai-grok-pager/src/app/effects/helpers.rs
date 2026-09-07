@@ -1214,22 +1214,6 @@ pub(crate) async fn persist_setting(
                 .await
                 .map_err(|e| e.to_string())
         }
-        "antigravity_subagents" => {
-            let SettingValue::Bool(b) = value else {
-                return Err(kind_mismatch("antigravity_subagents", "Bool", &value));
-            };
-            xai_grok_shell::util::config::set_antigravity_subagents(b)
-                .await
-                .map_err(|e| e.to_string())
-        }
-        "antigravity_skip_permissions" => {
-            let SettingValue::Bool(b) = value else {
-                return Err(kind_mismatch("antigravity_skip_permissions", "Bool", &value));
-            };
-            xai_grok_shell::util::config::set_antigravity_skip_permissions(b)
-                .await
-                .map_err(|e| e.to_string())
-        }
         "contextual_hints.undo" => {
             let SettingValue::Bool(b) = value else {
                 return Err(kind_mismatch("contextual_hints.undo", "Bool", &value));

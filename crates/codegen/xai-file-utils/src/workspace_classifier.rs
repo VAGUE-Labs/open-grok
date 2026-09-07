@@ -277,7 +277,6 @@ mod tests {
         #[test]
         fn other_ai_tool_dirs_are_unsafe() {
             if let Some(home) = dirs::home_dir() {
-                assert!(!is_project_dir(&home.join(".gemini/antigravity")));
                 assert!(!is_project_dir(&home.join(".hermes/kanban")));
                 assert!(!is_project_dir(&home.join(".claude/projects")));
             }

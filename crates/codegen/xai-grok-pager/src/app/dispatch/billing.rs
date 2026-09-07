@@ -508,15 +508,6 @@ pub(super) fn handle_usage_fetched(
     if let Some(agent) = app.agents.get_mut(&agent_id) {
         let mut text =
             crate::views::usage::format_combined_usage_summary(&xai_summary, &codex_summary);
-        // Append a best-effort Antigravity section when an agy subagent has
-        // captured a quota summary this process. The cache is process-global
-        // (populated by the agy runner); nothing to show means no section.
-        if let Some(summary) = xai_grok_shell::agent::antigravity::cached_quota_summary() {
-            text.push_str("\n\nAntigravity\n");
-            text.push_str(&crate::views::usage::format_antigravity_usage_summary(
-                &summary,
-            ));
-        }
         agent.scrollback.push_block(RenderBlock::System(
             crate::scrollback::blocks::SystemMessageBlock::new(text),
         ));

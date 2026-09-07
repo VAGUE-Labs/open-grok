@@ -1911,6 +1911,7 @@ pub(crate) async fn spawn_session_actor(
             subagent_rate_limit_max_attempts,
         ),
         startup_hints,
+        disable_project_discovery_watcher: false,
         forked_tool_override,
         compaction: super::compaction_config::CompactionConfig {
             threshold_percent: std::cell::Cell::new(auto_compact_threshold_percent),

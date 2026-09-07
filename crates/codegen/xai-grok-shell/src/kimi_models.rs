@@ -186,7 +186,9 @@ impl KimiModelsCatalog {
 
 #[derive(Clone, Debug)]
 pub(crate) struct KimiModelsClient {
-    http: reqwest::Client,
+    /// Built on first use; see `CodexModelsClient::http` for why the OS
+    /// trust-store load must stay off the construction path.
+    http: crate::lazy_http::LazyHttpClient,
     base_url: String,
     endpoint: KimiApiEndpoint,
 }
@@ -195,7 +197,7 @@ impl KimiModelsClient {
     pub(crate) fn new(configured_endpoint: KimiApiEndpoint) -> Self {
         let base_url = api_base_url(configured_endpoint);
         Self {
-            http: reqwest::Client::new(),
+            http: crate::lazy_http::LazyHttpClient::new(),
             endpoint: endpoint_for_effective_base_url(configured_endpoint, &base_url),
             base_url,
         }
@@ -204,7 +206,7 @@ impl KimiModelsClient {
     #[cfg(test)]
     fn with_base_url(base_url: impl Into<String>, endpoint: KimiApiEndpoint) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::lazy_http::LazyHttpClient::new(),
             base_url: base_url.into(),
             endpoint,
         }
@@ -246,6 +248,7 @@ impl KimiModelsClient {
         let url = format!("{}/models", self.base_url.trim_end_matches('/'));
         let response = self
             .http
+            .client()
             .get(&url)
             .timeout(KIMI_MODELS_REQUEST_TIMEOUT)
             .bearer_auth(api_key)

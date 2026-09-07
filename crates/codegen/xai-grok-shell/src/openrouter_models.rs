@@ -131,14 +131,14 @@ impl OpenRouterModelsCatalog {
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpenRouterModelsClient {
-    http: reqwest::Client,
+    http: crate::lazy_http::LazyHttpClient,
     base_url: String,
 }
 
 impl OpenRouterModelsClient {
     pub(crate) fn new() -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::lazy_http::LazyHttpClient::new(),
             base_url: api_base_url(),
         }
     }
@@ -146,7 +146,7 @@ impl OpenRouterModelsClient {
     #[cfg(test)]
     fn with_url(base_url: impl Into<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::lazy_http::LazyHttpClient::new(),
             base_url: base_url.into(),
         }
     }
@@ -177,6 +177,7 @@ impl OpenRouterModelsClient {
         let models_url = format!("{}/models", self.base_url.trim_end_matches('/'));
         let models_response = self
             .http
+            .client()
             .get(&models_url)
             .timeout(OPENROUTER_MODELS_REQUEST_TIMEOUT)
             .bearer_auth(api_key)

@@ -121,7 +121,7 @@ impl OpenCodeGoModelsCatalog {
 
 #[derive(Clone, Debug)]
 pub(crate) struct OpenCodeGoModelsClient {
-    http: reqwest::Client,
+    http: crate::lazy_http::LazyHttpClient,
     base_url: String,
     models_dev_url: String,
 }
@@ -129,7 +129,7 @@ pub(crate) struct OpenCodeGoModelsClient {
 impl OpenCodeGoModelsClient {
     pub(crate) fn new() -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::lazy_http::LazyHttpClient::new(),
             base_url: api_base_url(),
             models_dev_url: models_dev_url(),
         }
@@ -138,7 +138,7 @@ impl OpenCodeGoModelsClient {
     #[cfg(test)]
     fn with_urls(base_url: impl Into<String>, models_dev_url: impl Into<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::lazy_http::LazyHttpClient::new(),
             base_url: base_url.into(),
             models_dev_url: models_dev_url.into(),
         }
@@ -168,12 +168,14 @@ impl OpenCodeGoModelsClient {
         let models_url = format!("{}/models", self.base_url.trim_end_matches('/'));
         let models_request = self
             .http
+            .client()
             .get(&models_url)
             .timeout(OPENCODE_GO_MODELS_REQUEST_TIMEOUT)
             .bearer_auth(api_key)
             .send();
         let metadata_request = self
             .http
+            .client()
             .get(&self.models_dev_url)
             .timeout(OPENCODE_GO_MODELS_REQUEST_TIMEOUT)
             .send();

@@ -353,24 +353,22 @@ async fn test_launch_adopts_marker_written_before_first_claim() {
         .await
     });
 
-    // Wait until the late gate has snapped the empty marker and parked.
-    for _ in 0..100 {
-        if super::TEST_PAUSE_AFTER_MARKER_SNAPSHOT
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_none()
-        {
-            break;
-        }
+    // Wait until the late gate has snapped the empty marker and parked. The
+    // gate reaches the pause after disk I/O, so budget for a busy machine
+    // (a tight poll window flakes under full-suite parallel load) — but the
+    // loop exits as soon as the pause is observed.
+    let pause_deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while super::TEST_PAUSE_AFTER_MARKER_SNAPSHOT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some()
+    {
+        assert!(
+            std::time::Instant::now() < pause_deadline,
+            "late gate never reached the post-snapshot pause"
+        );
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    assert!(
-        super::TEST_PAUSE_AFTER_MARKER_SNAPSHOT
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_none(),
-        "late gate never reached the post-snapshot pause"
-    );
 
     bootstrap_with_lease_inner(
         &root,

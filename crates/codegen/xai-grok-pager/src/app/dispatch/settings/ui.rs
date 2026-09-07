@@ -181,8 +181,6 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
     let perplexity_web_search_enabled = app.perplexity_web_search_enabled;
     let web_search_source = xai_grok_shell::util::config::load_web_search_source_sync();
     let x_search_enabled = xai_grok_shell::util::config::load_x_search_config_sync().enabled;
-    let antigravity_skip_permissions =
-        xai_grok_shell::util::config::load_antigravity_skip_permissions_sync();
     let local_feature_flags = xai_grok_shell::util::config::load_local_feature_flags_sync();
     for agent in app.agents.values_mut() {
         // Walk both `Settings` and `ResetSettingsConfirm` — the
@@ -245,7 +243,6 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
                 perplexity_web_search_enabled,
                 web_search_source,
                 x_search_enabled,
-                antigravity_skip_permissions,
                 perplexity_api_key_status,
                 kimi_api_endpoint: kimi_api_endpoint.clone(),
                 coding_data_sharing_opt_out: coding_data_sharing_opt_out_from_app,
@@ -473,8 +470,6 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(
         perplexity_web_search_enabled: app.perplexity_web_search_enabled,
         web_search_source: xai_grok_shell::util::config::load_web_search_source_sync(),
         x_search_enabled: xai_grok_shell::util::config::load_x_search_config_sync().enabled,
-        antigravity_skip_permissions:
-            xai_grok_shell::util::config::load_antigravity_skip_permissions_sync(),
         perplexity_api_key_status: perplexity_api_key_status(),
         kimi_api_endpoint,
         coding_data_sharing_opt_out: coding_data_sharing_opt_out_from_app,
@@ -1316,8 +1311,6 @@ pub(crate) fn build_pager_snapshot(app: &AppView) -> crate::settings::PagerLocal
         perplexity_web_search_enabled: app.perplexity_web_search_enabled,
         web_search_source: xai_grok_shell::util::config::load_web_search_source_sync(),
         x_search_enabled: xai_grok_shell::util::config::load_x_search_config_sync().enabled,
-        antigravity_skip_permissions:
-            xai_grok_shell::util::config::load_antigravity_skip_permissions_sync(),
         perplexity_api_key_status: perplexity_api_key_status(),
         kimi_api_endpoint: app.kimi_api_endpoint.clone(),
         coding_data_sharing_opt_out: app.coding_data_retention_opt_out,
@@ -1497,12 +1490,6 @@ pub(in crate::app::dispatch) fn action_for_reset(
             trigger: "manual",
             persist: true,
         }),
-        ("antigravity_subagents", SettingValue::Bool(b)) => {
-            Some(Action::SetAntigravitySubagents(*b))
-        }
-        ("antigravity_skip_permissions", SettingValue::Bool(b)) => {
-            Some(Action::SetAntigravitySkipPermissions(*b))
-        }
         ("contextual_hints.undo", SettingValue::Bool(b)) => Some(Action::SetContextualHintUndo(*b)),
         ("contextual_hints.plan_mode", SettingValue::Bool(b)) => {
             Some(Action::SetContextualHintPlanMode(*b))
@@ -1783,10 +1770,9 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
     use crate::settings::SettingValue;
     let mut companion_effects: Vec<Effect> = Vec::new();
     match (key, rollback_value) {
-        // Web-search source, X search, and antigravity full-access hold no
-        // in-memory pager state — the modal reads them fresh from disk at
-        // snapshot time, so rolling back is just a modal refresh (done
-        // unconditionally below).
+        // Web-search source and X search hold no in-memory pager state — the
+        // modal reads them fresh from disk at snapshot time, so rolling back
+        // is just a modal refresh (done unconditionally below).
         (
             "toolset.web_search_source.xai"
             | "toolset.web_search_source.codex"
@@ -1798,7 +1784,7 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
             | "toolset.web_search_source.openrouter",
             SettingValue::Enum(_),
         )
-        | ("toolset.x_search.enabled" | "antigravity_skip_permissions", SettingValue::Bool(_)) => {}
+        | ("toolset.x_search.enabled", SettingValue::Bool(_)) => {}
         (key, SettingValue::Bool(value)) if crate::settings::is_local_feature_flag(key) => {
             update_open_settings_local_feature_flag(app, key, *value);
         }
@@ -1991,10 +1977,6 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
         // vim_mode: direct inner call.
         ("vim_mode", SettingValue::Bool(b)) => set_vim_mode_inner(app, *b),
         ("swarm_mode", SettingValue::Bool(b)) => app.current_ui.swarm_mode = Some(*b),
-        // Effective default is false → restore None (mirror stays disk-synced).
-        ("antigravity_subagents", SettingValue::Bool(b)) => {
-            app.current_ui.antigravity_subagents = if *b { Some(true) } else { None };
-        }
         ("remember_tool_approvals", SettingValue::Bool(b)) => {
             set_remember_tool_approvals_inner(app, *b)
         }

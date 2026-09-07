@@ -5115,7 +5115,13 @@ mod status_line_draw_tests {
     fn script_background_survives_the_pane_fill() {
         let buf = draw_script("\x1b[41mRED\x1b[0m", 30);
         let (x, y) = find(&buf, "RED").expect("the script row is on screen");
-        assert_eq!(buf[(x, y)].bg, Color::Red);
+        // The renderer quantizes colours to the terminal's level (Reset under
+        // NO_COLOR / TERM=dumb); compare against the same mapping so the test
+        // holds in colourless environments too.
+        assert_eq!(
+            buf[(x, y)].bg,
+            xai_grok_pager_render::theme::quantize(Color::Red)
+        );
     }
     fn question_agent() -> AgentView {
         let mut agent = make_agent();

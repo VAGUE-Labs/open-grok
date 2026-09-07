@@ -841,8 +841,9 @@ pub(super) fn handle_session_notification_with_origin(
             label,
             ..
         } => {
-            // A ready-made `label` (Antigravity heartbeat phase) is used
-            // verbatim; otherwise derive a rate-limit label from status/attempt.
+            // A ready-made `label` (out-of-process member heartbeat phase) is
+            // used verbatim; otherwise derive a rate-limit label from
+            // status/attempt.
             let activity_label = match label {
                 Some(label) if !label.trim().is_empty() => label,
                 _ => match status.as_str() {

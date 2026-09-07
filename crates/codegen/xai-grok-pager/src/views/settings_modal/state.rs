@@ -1027,14 +1027,12 @@ pub(super) fn compute_filtered(
 }
 
 /// Row visibility: voice rows need the voice gate; capture needs key releases;
-/// `hidden_in_minimal` rows are dropped in minimal mode; the antigravity row
-/// needs the CLI installed. Pure for unit tests.
+/// `hidden_in_minimal` rows are dropped in minimal mode. Pure for unit tests.
 pub(super) fn setting_row_visible(
     meta: &SettingMeta,
     kitty_releases: bool,
     minimal: bool,
     voice_mode: bool,
-    antigravity_cli: bool,
 ) -> bool {
     if !voice_mode
         && matches!(
@@ -1047,13 +1045,6 @@ pub(super) fn setting_row_visible(
     if meta.key == "voice_capture_mode" && !kitty_releases {
         return false;
     }
-    if matches!(
-        meta.key,
-        "antigravity_subagents" | "antigravity_skip_permissions"
-    ) && !antigravity_cli
-    {
-        return false;
-    }
     if minimal && meta.hidden_in_minimal {
         return false;
     }
@@ -1064,7 +1055,6 @@ fn build_rows(registry: &SettingsRegistry) -> Vec<RowEntry> {
     let kitty_releases = crate::app::kitty_releases_reported();
     let minimal = crate::app::minimal_mode_active();
     let voice_mode = crate::app::voice_mode_enabled();
-    let antigravity_cli = crate::app::antigravity_cli_present();
     // Keys that belong to a group sub-sheet are rendered only inside that
     // sheet, never as their own top-level rows.
     let group_children: std::collections::HashSet<SettingKey> = registry
@@ -1084,7 +1074,7 @@ fn build_rows(registry: &SettingsRegistry) -> Vec<RowEntry> {
             if meta.category != *cat {
                 continue;
             }
-            if !setting_row_visible(meta, kitty_releases, minimal, voice_mode, antigravity_cli) {
+            if !setting_row_visible(meta, kitty_releases, minimal, voice_mode) {
                 continue;
             }
             if group_children.contains(meta.key) {
@@ -1138,8 +1128,6 @@ pub(super) fn action_for_bool(key: SettingKey, new: bool) -> Option<Action> {
             trigger: "manual",
             persist: true,
         }),
-        "antigravity_subagents" => Some(Action::SetAntigravitySubagents(new)),
-        "antigravity_skip_permissions" => Some(Action::SetAntigravitySkipPermissions(new)),
         "respect_manual_folds" => Some(Action::SetRespectManualFolds(new)),
         "page_flip_on_send" => Some(Action::SetPageFlipOnSend(new)),
         "confirm_before_rewind" => Some(Action::SetConfirmBeforeRewind(new)),

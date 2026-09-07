@@ -50,6 +50,21 @@ fn ids(wire: &[crate::session::prompt_queue::QueueEntryWire]) -> Vec<String> {
     wire.iter().map(|e| e.id.clone()).collect()
 }
 
+/// `set_follow_up_steer_cache` only validates against an existing
+/// `config.toml` (mtime-keyed); seed one so the Steer tests behave the same
+/// in a fresh, empty `OPENGROK_HOME`.
+fn seed_config_for_steer_cache() {
+    let config = crate::util::grok_home::grok_home().join("config.toml");
+    if !config.exists() {
+        std::fs::write(&config, b"").expect("seed config.toml");
+    }
+}
+
+/// The Steer cache is process-global, so the two `drain_at_safe_point_*`
+/// tests must not interleave (each sets the cache and immediately asserts
+/// behavior derived from it).
+static STEER_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// A queued user bash item (`!cmd`), mirroring `queue_input`'s derivation.
 fn bash_item(id: &str, owner: &str, command: &str) -> InputItem {
     let mut item = user_item(id, owner);
@@ -1180,9 +1195,11 @@ async fn promote_queued_as_interjections_stops_at_send_now() {
 /// safe point (queue stays; no interjection in conversation).
 #[tokio::test]
 async fn drain_at_safe_point_with_steer_off_does_not_promote_held_row() {
+    let _steer = STEER_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
+            seed_config_for_steer_cache();
             crate::util::config::set_follow_up_steer_cache(false);
             let (actor, _rx) = build_actor().await;
             {
@@ -1213,9 +1230,11 @@ async fn drain_at_safe_point_with_steer_off_does_not_promote_held_row() {
 /// synthetic interjection user item.
 #[tokio::test]
 async fn drain_at_safe_point_with_steer_on_promotes_and_drains_held_row() {
+    let _steer = STEER_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
+            seed_config_for_steer_cache();
             crate::util::config::set_follow_up_steer_cache(true);
             let (actor, _rx) = build_actor().await;
             {

@@ -137,43 +137,6 @@ client-side image extension with `gpt-image-2`, the Codex Images endpoints, and
 the isolated `codex-auth.json` bearer/account headers. It is not the hosted
 Responses `image_generation` declaration. Video generation remains xAI-only.
 
-### Antigravity subagents
-
-```toml
-[ui]
-antigravity_subagents = false   # Settings row: "Antigravity subagents"
-
-[antigravity]                   # optional operator knobs (no Settings UI)
-binary = "agy"                  # name or absolute path of the Antigravity CLI
-skip_permissions = true         # default: full access (see below)
-```
-
-- **What it does:** when enabled, the Antigravity CLI's models become subagent
-  models for the `task`, `agent_swarm`, and `workflow` tools as
-  `antigravity:<model>` slugs (e.g. `antigravity:gemini-3.1-pro`), queried live
-  from `agy models`. The child runs out-of-process via `agy --print` — its own
-  model, login, and tool loop; no `SamplingClient` — with the workspace granted
-  via `--add-dir` and the conversation id captured from `--log-file` so
-  `resume_from` continues the same CLI conversation (`--conversation`).
-- **Gating:** the Settings row is hidden unless the binary resolves
-  (`xai-grok-pager` seeds `ANTIGRAVITY_CLI_PRESENT` at startup, honoring
-  `[antigravity].binary`). Being signed out of `agy` fails spawns with a
-  "run `agy` to sign in" error; the roster/validator caches probe results
-  (`agent/antigravity.rs`, 5m TTL signed-in / 30s signed-out). Restart
-  required after toggling.
-- **Permissions:** headless `agy` auto-denies mutating tools without its
-  auto-approve flag, which surfaced as constant permission errors for
-  worker subagents. Open Grok therefore passes the flag **by default**
-  (`skip_permissions` unset ⇒ true): antigravity members get workspace
-  writes and command execution. Set `[antigravity] skip_permissions =
-  false` to force read-only researchers, and spawns whose capability mode
-  is pinned read-only never get the flag regardless.
-- **Anchors:** CLI mechanics `xai-grok-shell/src/agent/antigravity.rs`;
-  dispatch branch `agent/subagent/handle_request.rs` (routes `antigravity:*`
-  to `agent/subagent/antigravity_runner.rs`); roster/validator injection
-  `session/agent_rebuild.rs`; conversation id persisted in subagent
-  `meta.json` (`antigravity_conversation_id`).
-
 ### Notable env vars
 
 | Var | Role |

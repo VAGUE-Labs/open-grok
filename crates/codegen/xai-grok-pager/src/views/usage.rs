@@ -1,6 +1,5 @@
 //! Provider-aware formatting for the manual `/usage` summary.
 
-use xai_grok_shell::agent::antigravity::QuotaSummary;
 use xai_grok_shell::codex_auth::{CodexAccountSummary, CodexRateLimitWindow, CodexUsageSnapshot};
 
 /// The signed-in Codex account identity as `/usage` lines (`Account: <email>`
@@ -31,40 +30,6 @@ pub fn format_codex_account_header(account: &CodexAccountSummary) -> Option<Stri
 /// Join independently produced provider summaries into one scrollback block.
 pub fn format_combined_usage_summary(xai: &str, codex: &str) -> String {
     format!("xAI\n{xai}\n\nOpenAI Codex\n{codex}")
-}
-
-/// Format the cached Antigravity (agy) quota buckets as a `/usage` section
-/// body: one line per bucket (`<group> · <name>: <pct>% left [(resets <time>)]`)
-/// followed by a freshness footer. The quota is only captured while an agy
-/// subagent runs, so the age of the cache is stated explicitly.
-pub fn format_antigravity_usage_summary(summary: &QuotaSummary) -> String {
-    let mut lines = Vec::with_capacity(summary.buckets.len() + 1);
-    for bucket in &summary.buckets {
-        let remaining = (bucket.remaining_fraction.clamp(0.0, 1.0) * 100.0).round() as u32;
-        let group = bucket.group.trim();
-        let display = bucket.display_name.trim();
-        let name = match (group.is_empty(), display.is_empty()) {
-            (false, false) => format!("{group} · {display}"),
-            (true, false) => display.to_string(),
-            (false, true) => group.to_string(),
-            (true, true) => bucket.label().to_string(),
-        };
-        let mut line = format!("{name}: {remaining}% left");
-        if let Some(reset) = bucket
-            .reset_time
-            .as_deref()
-            .map(str::trim)
-            .filter(|reset| !reset.is_empty())
-        {
-            line.push_str(&format!(" (resets {reset})"));
-        }
-        lines.push(line);
-    }
-    let age_min = summary.age().as_secs() / 60;
-    lines.push(format!(
-        "as of {age_min}m ago, refreshed when agy subagents run"
-    ));
-    lines.join("\n")
 }
 
 /// Format an xAI billing transport/parse error without hiding the Codex half.
@@ -371,49 +336,6 @@ mod tests {
         assert_eq!(
             summary,
             "xAI\nWeekly limit: 20%\n\nOpenAI Codex\n5h limit: 80% left"
-        );
-    }
-
-    #[test]
-    fn antigravity_summary_lists_buckets_and_freshness() {
-        use xai_grok_shell::agent::antigravity::{QuotaBucket, QuotaSummary};
-        let summary = QuotaSummary {
-            buckets: vec![
-                QuotaBucket {
-                    group: "Gemini Models".to_string(),
-                    display_name: "Weekly Limit".to_string(),
-                    bucket_id: Some("gemini-weekly".to_string()),
-                    window: Some("weekly".to_string()),
-                    remaining_fraction: 1.0,
-                    reset_time: Some("2026-07-30T16:00:30Z".to_string()),
-                },
-                QuotaBucket {
-                    group: "Gemini Models".to_string(),
-                    display_name: "Daily Limit".to_string(),
-                    bucket_id: Some("gemini-daily".to_string()),
-                    window: Some("daily".to_string()),
-                    remaining_fraction: 0.25,
-                    reset_time: None,
-                },
-            ],
-            fetched_at: std::time::Instant::now(),
-        };
-        let text = format_antigravity_usage_summary(&summary);
-        assert!(
-            text.contains("Gemini Models · Weekly Limit: 100% left (resets 2026-07-30T16:00:30Z)"),
-            "got: {text}"
-        );
-        assert!(
-            text.contains("Gemini Models · Daily Limit: 25% left"),
-            "got: {text}"
-        );
-        assert!(
-            !text.contains("Daily Limit: 25% left (resets"),
-            "no reset clause when reset_time is absent: {text}"
-        );
-        assert!(
-            text.contains("refreshed when agy subagents run"),
-            "got: {text}"
         );
     }
 

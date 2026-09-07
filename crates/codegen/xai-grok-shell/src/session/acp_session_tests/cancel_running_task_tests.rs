@@ -177,6 +177,7 @@ fn persist_ack_waits_for_disk_flush_before_success() {
                 file_state_tracker: Arc::new(FileStateTracker::new()),
                 rewind_pending_prompt: std::sync::Mutex::new(None),
                 startup_hints: StartupHints::default(),
+                disable_project_discovery_watcher: true,
                 forked_tool_override: None,
                 compaction: crate::session::compaction_config::CompactionConfig {
                     threshold_percent: std::cell::Cell::new(85),
@@ -708,6 +709,7 @@ fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history() {
                 file_state_tracker: Arc::new(FileStateTracker::new()),
                 rewind_pending_prompt: std::sync::Mutex::new(None),
                 startup_hints: StartupHints::default(),
+                disable_project_discovery_watcher: true,
                 forked_tool_override: None,
                 compaction: crate::session::compaction_config::CompactionConfig {
                     threshold_percent: std::cell::Cell::new(85),
@@ -1040,6 +1042,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                 file_state_tracker: Arc::new(FileStateTracker::new()),
                 rewind_pending_prompt: std::sync::Mutex::new(None),
                 startup_hints: StartupHints::default(),
+                disable_project_discovery_watcher: true,
                 forked_tool_override: None,
                 compaction: crate::session::compaction_config::CompactionConfig {
                     threshold_percent: std::cell::Cell::new(85),
@@ -2622,6 +2625,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 file_state_tracker: Arc::new(FileStateTracker::new()),
                 rewind_pending_prompt: std::sync::Mutex::new(None),
                 startup_hints: StartupHints::default(),
+                disable_project_discovery_watcher: true,
                 forked_tool_override: None,
                 compaction: crate::session::compaction_config::CompactionConfig {
                     threshold_percent: std::cell::Cell::new(85),

@@ -1455,10 +1455,6 @@ pub struct Config {
     /// `[auto_mode]` section: Auto permission-mode configuration. See [`AutoModeConfig`].
     #[serde(default)]
     pub auto_mode: AutoModeConfig,
-    /// `[antigravity]` section: Antigravity CLI subagent integration. See
-    /// [`AntigravityConfig`].
-    #[serde(default)]
-    pub antigravity: AntigravityConfig,
     /// `[model.*]` overrides from config.toml. Resolve via `resolve_model_list()`.
     #[serde(skip)]
     pub config_models: IndexMap<String, ConfigModelOverride>,
@@ -1912,7 +1908,6 @@ impl Default for Config {
             doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings::default(),
             worktree: WorktreeConfigSection::default(),
             auto_mode: AutoModeConfig::default(),
-            antigravity: AntigravityConfig::default(),
             config_models: IndexMap::new(),
             config_warnings: Vec::new(),
             grok_com_config: GrokComConfig::default(),
@@ -5504,28 +5499,6 @@ pub struct GoalConfig {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub skeptic_models: Vec<crate::util::config::GoalRoleModel>,
-}
-/// `[antigravity]` section: Antigravity CLI (`agy`) subagent integration.
-/// The user-facing on/off switch lives at `[ui].antigravity_subagents`
-/// (settings modal, hidden when the CLI is not installed); this table holds
-/// the operator knobs that rarely change.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct AntigravityConfig {
-    /// Binary name or absolute path of the Antigravity CLI. `None` ⇒ `agy`
-    /// resolved on `PATH`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub binary: Option<String>,
-    /// Pass the CLI's auto-approve flag so antigravity subagents may edit
-    /// files and run commands in the workspace. The runner resolves this
-    /// `unwrap_or(true)`, so `None` (unset) means full access — the default,
-    /// which stopped implementation-stage subagents from constant permission
-    /// errors. Set `false` to opt out and force read-only researcher subagents
-    /// (headless `agy` then auto-denies mutating tools); a caller that pins a
-    /// read-only capability mode stays read-only regardless. Surfaced in
-    /// Settings as "Antigravity full access".
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub skip_permissions: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

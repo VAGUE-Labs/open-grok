@@ -780,22 +780,20 @@ pub enum SessionUpdate {
     },
     /// Transient runtime status for a subagent.
     ///
-    /// Used for coordinated-swarm provider rate-limit backoff/retry attempts,
-    /// and for out-of-process (Antigravity) member heartbeats that carry a
-    /// ready-made `label` phase. This update is never persisted to session
-    /// history.
+    /// Used for coordinated-swarm provider rate-limit backoff/retry attempts.
+    /// This update is never persisted to session history.
     SubagentStatus {
         subagent_id: String,
         parent_session_id: String,
         child_session_id: String,
-        /// "rate_limit_waiting", "rate_limit_retrying", or "antigravity_phase".
+        /// "rate_limit_waiting" or "rate_limit_retrying".
         status: String,
         attempt: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         retry_after_ms: Option<u64>,
         /// Ready-made activity label for the subagent card. When present the
-        /// client uses it verbatim (used by the Antigravity heartbeat); when
-        /// absent the client derives a label from `status`/`attempt`.
+        /// client uses it verbatim; when absent the client derives a label
+        /// from `status`/`attempt`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
     },
@@ -1789,10 +1787,10 @@ mod tests {
     #[test]
     fn subagent_status_roundtrips_with_phase_label() {
         let update = SessionUpdate::SubagentStatus {
-            subagent_id: "sub-agy".into(),
+            subagent_id: "sub-label".into(),
             parent_session_id: "p".into(),
             child_session_id: "c".into(),
-            status: "antigravity_phase".into(),
+            status: "custom_phase".into(),
             attempt: 0,
             retry_after_ms: None,
             label: Some("Working".into()),

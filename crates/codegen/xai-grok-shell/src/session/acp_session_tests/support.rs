@@ -268,7 +268,15 @@ pub(crate) async fn create_test_actor_with_terminal(
     SessionActor,
     tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
 ) {
-    let cwd = xai_grok_paths::AbsPathBuf::new(std::env::temp_dir()).unwrap();
+    // A dedicated empty dir per actor: `run_session` starts filesystem
+    // watchers against the session cwd, and watching the shared system temp
+    // dir couples every timing-sensitive test to unrelated machine I/O
+    // (FSEvents on a busy /tmp can block for seconds). Leaked on purpose —
+    // the actor needs the cwd to outlive it.
+    let cwd = xai_grok_paths::AbsPathBuf::new(
+        tempfile::TempDir::new().expect("actor cwd tempdir").keep(),
+    )
+    .unwrap();
     let fs = Arc::new(xai_grok_workspace::file_system::MockFs::new(
         cwd.to_path_buf(),
     ));
@@ -372,6 +380,7 @@ pub(crate) async fn create_test_actor_with_terminal(
         file_state_tracker: Arc::new(FileStateTracker::new()),
         rewind_pending_prompt: std::sync::Mutex::new(None),
         startup_hints: StartupHints::default(),
+        disable_project_discovery_watcher: true,
         forked_tool_override: None,
         compaction: crate::session::compaction_config::CompactionConfig {
             threshold_percent: std::cell::Cell::new(threshold_percent),

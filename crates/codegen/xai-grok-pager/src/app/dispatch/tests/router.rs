@@ -2104,7 +2104,8 @@ fn pager_registry_default_matches_agent_view_new_initializer() {
                 | "custom_model_max_context_window"
                 | "custom_model_backend"
                 | "custom_model_env_key"
-                | "custom_model_save",
+                | "custom_model_save"
+                | "custom_provider_wizard",
                 _,
             ) => {
                 assert_eq!(

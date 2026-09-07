@@ -71,28 +71,6 @@ pub fn load_x_search_config_sync() -> crate::tools::config::XSearchToolConfig {
     load_toolset_subsection_sync("x_search")
 }
 
-/// Synchronously resolve `[antigravity].skip_permissions` from the effective
-/// config, defaulting to `true` (full access) when unset — mirroring the
-/// antigravity runner's `state.config.skip_permissions.unwrap_or(true)`.
-/// Read fresh at session spawn so a Settings opt-out applies to new
-/// subagents without a process restart.
-pub fn load_antigravity_skip_permissions_sync() -> bool {
-    let root: TomlValue = match crate::config::load_effective_config() {
-        Ok(r) => r,
-        Err(_) => return true,
-    };
-    root.as_table()
-        .and_then(|table| table.get("antigravity"))
-        .and_then(|value| {
-            value
-                .clone()
-                .try_into::<crate::agent::config::AntigravityConfig>()
-                .ok()
-        })
-        .and_then(|cfg| cfg.skip_permissions)
-        .unwrap_or(true)
-}
-
 fn load_toolset_subsection_sync<T: serde::de::DeserializeOwned + Default>(key: &str) -> T {
     let root: TomlValue = match crate::config::load_effective_config() {
         Ok(r) => r,
@@ -139,7 +117,6 @@ pub fn load_config_from_toml(root: &TomlValue) -> Config {
         cli: section(table, "cli"),
         models: section(table, "models"),
         ui: section(table, "ui"),
-        antigravity: section(table, "antigravity"),
         harness: {
             #[allow(unused_mut)]
             let mut harness: crate::agent::config::HarnessConfig = section(table, "harness");

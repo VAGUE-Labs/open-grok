@@ -41,6 +41,8 @@ const ALL_SETTINGS_EXERCISED: &[&str] = &[
     "swarm_mode",
     "vim_mode",
     "remember_tool_approvals",
+    "codex_persistent_mode",
+    "codex_guardian_review",
     "code_mode",
     "image_generation_provider",
     "toolset.ask_user_question.timeout_enabled",
@@ -98,13 +100,12 @@ const ALL_SETTINGS_EXERCISED: &[&str] = &[
     "scroll_lines",
     "invert_scroll",
     "display_refresh_auto_cadence",
-    "antigravity_subagents",
-    "antigravity_skip_permissions",
     "coding_data_sharing",
     "default_selected_permission",
     "plan_mode",
     "show_tips",
     "auto_update",
+    "stream_tool_calls",
     "fork_secondary_model",
     "show_thinking_blocks",
     "prompt_suggestions",
@@ -133,6 +134,7 @@ const ALL_SETTINGS_EXERCISED: &[&str] = &[
     "features.web_fetch",
     "toolset.web_fetch.allow_local",
     "features.two_pass_compaction",
+    "features.context_management.experimental_mode",
     "features.non_git_warning",
     "features.remember_mode",
     "doom_loop_recovery.enabled",
@@ -149,6 +151,7 @@ const ALL_SETTINGS_EXERCISED: &[&str] = &[
 /// Local feature-flag rows and their registry defaults. Space/mouse tests
 /// toggle each to `!default` via `Action::SetLocalFeatureFlag`.
 const LOCAL_FEATURE_FLAG_KEYS: &[(&str, bool)] = &[
+    ("features.context_management.experimental_mode", false),
     ("memory.enabled", false),
     ("memory.dream.enabled", true),
     ("features.telemetry", false),
@@ -205,8 +208,6 @@ fn matrix_is_subset_of_registry() {
 fn make_state() -> SettingsModalState {
     // Voice rows are hidden when the process gate is off (default until startup).
     xai_grok_pager::app::set_voice_mode_enabled_for_test(true);
-    // Same for the antigravity row (hidden unless the CLI presence gate is on).
-    xai_grok_pager::app::set_antigravity_cli_present_for_test(true);
     SettingsModalState::new(
         Arc::new(SettingsRegistry::defaults()),
         UiConfig::default(),
@@ -349,6 +350,18 @@ fn assert_set_bool_action(outcome: SettingsKeyOutcome, key: &str, expected: bool
                 "SetRememberToolApprovals value differs from expected"
             )
         }
+        ("codex_persistent_mode", Action::SetCodexPersistentMode(b)) => {
+            assert_eq!(
+                b, expected,
+                "SetCodexPersistentMode value differs from expected"
+            )
+        }
+        ("codex_guardian_review", Action::SetCodexGuardianReview(b)) => {
+            assert_eq!(
+                b, expected,
+                "SetCodexGuardianReview value differs from expected"
+            )
+        }
         ("voice_keybind_enabled", Action::SetVoiceKeybindEnabled(b)) => {
             assert_eq!(
                 b, expected,
@@ -415,18 +428,6 @@ fn assert_set_bool_action(outcome: SettingsKeyOutcome, key: &str, expected: bool
             assert_eq!(
                 b, expected,
                 "SetDisplayRefreshAutoCadence value differs from expected"
-            )
-        }
-        ("antigravity_subagents", Action::SetAntigravitySubagents(b)) => {
-            assert_eq!(
-                b, expected,
-                "SetAntigravitySubagents value differs from expected"
-            )
-        }
-        ("antigravity_skip_permissions", Action::SetAntigravitySkipPermissions(b)) => {
-            assert_eq!(
-                b, expected,
-                "SetAntigravitySkipPermissions value differs from expected"
             )
         }
         ("custom_provider_wizard", Action::SetCustomProviderWizard(b)) => {
@@ -658,6 +659,33 @@ fn space_on_remember_tool_approvals_dispatches_typed_setter() {
     let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
     // Default is false, so toggling flips it on.
     assert_set_bool_action(outcome, "remember_tool_approvals", true);
+}
+
+#[test]
+fn space_on_codex_persistent_mode_dispatches_typed_setter() {
+    let mut s = make_state();
+    navigate_to(&mut s, "codex_persistent_mode");
+    let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
+    // Default is false, so toggling flips it on.
+    assert_set_bool_action(outcome, "codex_persistent_mode", true);
+}
+
+#[test]
+fn space_on_codex_guardian_review_dispatches_typed_setter() {
+    let mut s = make_state();
+    navigate_to(&mut s, "codex_guardian_review");
+    let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
+    // Default is false, so toggling flips it on.
+    assert_set_bool_action(outcome, "codex_guardian_review", true);
+}
+
+#[test]
+fn space_on_stream_tool_calls_dispatches_typed_setter() {
+    let mut s = make_state();
+    navigate_to(&mut s, "stream_tool_calls");
+    let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
+    // Default is true, so toggling flips it off.
+    assert_set_bool_action(outcome, "stream_tool_calls", false);
 }
 
 #[test]
@@ -1350,6 +1378,48 @@ fn mouse_click_on_remember_tool_approvals_indicator_toggles_in_one_click() {
         row_y,
     );
     assert_set_bool_action(outcome, "remember_tool_approvals", true);
+}
+
+#[test]
+fn mouse_click_on_codex_persistent_mode_indicator_toggles_in_one_click() {
+    let mut s = make_state();
+    synth_rects(&mut s);
+    let row_y = row_idx_for(&s, "codex_persistent_mode") as u16;
+    let outcome = handle_settings_mouse(
+        &mut s,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        72,
+        row_y,
+    );
+    assert_set_bool_action(outcome, "codex_persistent_mode", true);
+}
+
+#[test]
+fn mouse_click_on_codex_guardian_review_indicator_toggles_in_one_click() {
+    let mut s = make_state();
+    synth_rects(&mut s);
+    let row_y = row_idx_for(&s, "codex_guardian_review") as u16;
+    let outcome = handle_settings_mouse(
+        &mut s,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        72,
+        row_y,
+    );
+    assert_set_bool_action(outcome, "codex_guardian_review", true);
+}
+
+#[test]
+fn mouse_click_on_stream_tool_calls_indicator_toggles_in_one_click() {
+    let mut s = make_state();
+    synth_rects(&mut s);
+    let row_y = row_idx_for(&s, "stream_tool_calls") as u16;
+    let outcome = handle_settings_mouse(
+        &mut s,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        72,
+        row_y,
+    );
+    assert_set_bool_action(outcome, "stream_tool_calls", false);
 }
 
 #[test]
@@ -2997,9 +3067,9 @@ fn registry_kind_membership_through_pr_14() {
     assert_eq!(
         bool_keys,
         vec![
-            "antigravity_skip_permissions",
-            "antigravity_subagents",
             "auto_update",
+            "codex_guardian_review",
+            "codex_persistent_mode",
             "collapsed_edit_blocks",
             "combine_queued_prompts",
             "compact_mode",
@@ -3019,6 +3089,7 @@ fn registry_kind_membership_through_pr_14() {
             "display_refresh_auto_cadence",
             "doom_loop_recovery.enabled",
             "enter_steers",
+            "features.context_management.experimental_mode",
             "features.lsp_tools",
             "features.non_git_warning",
             "features.remember_mode",
@@ -3042,6 +3113,7 @@ fn registry_kind_membership_through_pr_14() {
             "show_timestamps",
             "show_tips",
             "simple_mode",
+            "stream_tool_calls",
             "suggestions.ai_enabled",
             "suggestions.enabled",
             "swarm_mode",
@@ -3346,6 +3418,7 @@ fn defaults_round_trip_through_registry() {
             "features.web_fetch" => SettingValue::Bool(false),
             "toolset.web_fetch.allow_local" => SettingValue::Bool(false),
             "features.two_pass_compaction" => SettingValue::Bool(false),
+            "features.context_management.experimental_mode" => SettingValue::Bool(false),
             "features.non_git_warning" => SettingValue::Bool(false),
             "features.remember_mode" => SettingValue::Bool(false),
             "doom_loop_recovery.enabled" => SettingValue::Bool(true),
@@ -3365,8 +3438,6 @@ fn defaults_round_trip_through_registry() {
             "scroll_lines" => SettingValue::Int(3),
             "invert_scroll" => SettingValue::Bool(false),
             "display_refresh_auto_cadence" => SettingValue::Bool(false),
-            "antigravity_subagents" => SettingValue::Bool(false),
-            "antigravity_skip_permissions" => SettingValue::Bool(true),
             "coding_data_sharing" => SettingValue::Enum("opt-out"),
             "default_selected_permission" => SettingValue::Enum("always_allow_all_sessions"),
             "hunk_tracker_mode" => SettingValue::Enum("agent_only"),
@@ -3378,6 +3449,9 @@ fn defaults_round_trip_through_registry() {
             "auto_update" => SettingValue::Bool(true),
             "fork_secondary_model" => SettingValue::String(String::new()),
             "show_thinking_blocks" => SettingValue::Bool(true),
+            "codex_persistent_mode" => SettingValue::Bool(false),
+            "codex_guardian_review" => SettingValue::Bool(false),
+            "stream_tool_calls" => SettingValue::Bool(true),
             "prompt_suggestions" => SettingValue::Bool(true),
             "group_tool_verbs" => SettingValue::Bool(true),
             "collapsed_edit_blocks" => SettingValue::Bool(false),
@@ -3460,6 +3534,8 @@ fn settings_value_payload_matches_kind() {
             | SettingsKeyOutcome::Action(Action::SetMultilineMode(_))
             | SettingsKeyOutcome::Action(Action::SetVimMode(_))
             | SettingsKeyOutcome::Action(Action::SetRememberToolApprovals(_))
+            | SettingsKeyOutcome::Action(Action::SetCodexPersistentMode(_))
+            | SettingsKeyOutcome::Action(Action::SetCodexGuardianReview(_))
             | SettingsKeyOutcome::Action(Action::SetAskUserQuestionTimeoutEnabled(_))
             | SettingsKeyOutcome::Action(Action::SetPerplexityWebSearch(_))
             | SettingsKeyOutcome::Action(Action::SetShowTips(_))
@@ -3472,8 +3548,6 @@ fn settings_value_payload_matches_kind() {
             | SettingsKeyOutcome::Action(Action::SetCollapsedEditBlocks(_))
             | SettingsKeyOutcome::Action(Action::SetInvertScroll(_))
             | SettingsKeyOutcome::Action(Action::SetDisplayRefreshAutoCadence(_))
-            | SettingsKeyOutcome::Action(Action::SetAntigravitySubagents(_))
-            | SettingsKeyOutcome::Action(Action::SetAntigravitySkipPermissions(_))
             | SettingsKeyOutcome::Action(Action::SetXSearchEnabled(_))
             | SettingsKeyOutcome::Action(Action::SetVoiceKeybindEnabled(_))
             | SettingsKeyOutcome::Action(Action::SetEnterSteers(_))
@@ -8764,97 +8838,6 @@ fn display_refresh_auto_cadence_defaults_roundtrip_via_current_value_for() {
     ui_on.display_refresh.auto_cadence_enabled = Some(true);
     let value = current_value_for("display_refresh_auto_cadence", &ui_on, &pager)
         .expect("current_value_for(display_refresh_auto_cadence) must resolve");
-    assert_eq!(value, SettingValue::Bool(true));
-}
-
-// ---------------------------------------------------------------------------
-// antigravity_subagents — SHELL-owned Bool (Agent, default false, row gated
-// on the Antigravity CLI presence static — make_state() turns the gate on)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn antigravity_subagents_space_dispatches_typed_setter() {
-    let mut s = make_state();
-    navigate_to(&mut s, "antigravity_subagents");
-    let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
-    assert_set_bool_action(outcome, "antigravity_subagents", true);
-}
-
-#[test]
-fn antigravity_subagents_enter_dispatches_typed_setter() {
-    // Seed on so Enter toggles off.
-    xai_grok_pager::app::set_antigravity_cli_present_for_test(true);
-    let mut ui = UiConfig::default();
-    ui.antigravity_subagents = Some(true);
-    let mut s = SettingsModalState::new(
-        Arc::new(SettingsRegistry::defaults()),
-        ui,
-        PagerLocalSnapshot {
-            auto_mode_gate: true,
-            ..PagerLocalSnapshot::default()
-        },
-    );
-    navigate_to(&mut s, "antigravity_subagents");
-    let outcome = handle_settings_key(&mut s, &press(KeyCode::Enter));
-    assert_set_bool_action(outcome, "antigravity_subagents", false);
-}
-
-#[test]
-fn antigravity_subagents_mouse_click_two_stage_toggles() {
-    let mut s = make_state();
-    synth_rects(&mut s);
-    let row_y = row_idx_for(&s, "antigravity_subagents") as u16;
-    let outcome = handle_settings_mouse(
-        &mut s,
-        MouseEventKind::Down(crossterm::event::MouseButton::Left),
-        10,
-        row_y,
-    );
-    assert!(
-        matches!(outcome, SettingsKeyOutcome::Changed),
-        "first body-click should only select, got {outcome:?}"
-    );
-    let outcome = handle_settings_mouse(
-        &mut s,
-        MouseEventKind::Down(crossterm::event::MouseButton::Left),
-        10,
-        row_y,
-    );
-    assert_set_bool_action(outcome, "antigravity_subagents", true);
-}
-
-#[test]
-fn antigravity_subagents_meta_agent_shell_restart() {
-    let reg = SettingsRegistry::defaults();
-    let meta = reg
-        .find("antigravity_subagents")
-        .expect("antigravity_subagents registered");
-    assert_eq!(meta.category, SettingCategory::Agent);
-    assert_eq!(meta.owner, SettingOwner::Shell);
-    assert!(meta.restart_required);
-    assert!(!meta.hidden_in_minimal);
-    assert_eq!(meta.label, "Antigravity subagents");
-    match &meta.kind {
-        SettingKind::Bool { default } => {
-            assert!(!default, "antigravity_subagents must default OFF")
-        }
-        other => panic!("expected Bool kind for antigravity_subagents, got {other:?}"),
-    }
-}
-
-#[test]
-fn antigravity_subagents_defaults_roundtrip_via_current_value_for() {
-    use xai_grok_pager::settings::current_value_for;
-    let ui = UiConfig::default();
-    let pager = PagerLocalSnapshot::default();
-    let value = current_value_for("antigravity_subagents", &ui, &pager)
-        .expect("current_value_for(antigravity_subagents) must resolve");
-    assert_eq!(value, SettingValue::Bool(false));
-
-    let mut ui_on = UiConfig::default();
-    ui_on.antigravity_subagents = Some(true);
-    let value = current_value_for("antigravity_subagents", &ui_on, &pager)
-        .expect("current_value_for(antigravity_subagents) must resolve");
     assert_eq!(value, SettingValue::Bool(true));
 }
 

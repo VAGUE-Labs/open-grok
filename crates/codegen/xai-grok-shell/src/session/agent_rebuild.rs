@@ -424,20 +424,13 @@ impl AgentRebuildSpec {
         .with_active_agent_messages_enabled(*active_agent_messages_enabled && *subagent_depth == 0)
         .with_subagent_toggle(subagent_toggle.clone())
         .with_background_workflows_enabled(*background_workflows_enabled)
-        .with_task_model_slugs({
-            let mut slugs = models_manager
+        .with_task_model_slugs(
+            models_manager
                 .available()
                 .keys()
                 .map(|model_id| model_id.0.to_string())
-                .collect::<Vec<_>>();
-            // `antigravity:*` slugs advertise the Antigravity CLI roster when
-            // the feature is enabled + signed in. Cache-backed and
-            // non-blocking: the first rebuild after startup may miss them
-            // while the probe runs, but spawn-side validation is independent
-            // of this advertisement.
-            slugs.extend(crate::agent::antigravity::advertised_slugs_nonblocking());
-            slugs
-        })
+                .collect::<Vec<_>>(),
+        )
         .with_ask_user_question_enabled(*ask_user_question_enabled)
         .with_async_user_messages_enabled(
             *subagent_depth == 0 && active_sampling_config.read().supports_async_user_messages(),
@@ -521,11 +514,6 @@ impl AgentRebuildSpec {
         agent
             .tool_bridge()
             .update_resource(TaskModelValidator::new(move |requested| {
-                if crate::agent::antigravity::is_antigravity_slug(requested) {
-                    // Cheap cache-backed gate; the coordinator re-checks
-                    // authoritatively (async) at spawn time.
-                    return crate::agent::antigravity::task_slug_error_nonblocking(requested);
-                }
                 model_validator.task_model_error(requested)
             }))
             .await;

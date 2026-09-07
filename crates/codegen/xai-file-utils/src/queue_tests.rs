@@ -1758,6 +1758,10 @@ struct CountingResolver {
 }
 
 impl TraceExportSource for CountingResolver {
+    fn proxy_http_client(&self) -> Option<reqwest::Client> {
+        Some(shared_test_http_client())
+    }
+
     fn resolve(&self) -> TraceExportConfig {
         self.count.fetch_add(1, Ordering::SeqCst);
         TraceExportConfig {
@@ -2068,6 +2072,10 @@ impl ParkingResolver {
 }
 
 impl TraceExportSource for ParkingResolver {
+    fn proxy_http_client(&self) -> Option<reqwest::Client> {
+        Some(shared_test_http_client())
+    }
+
     fn has_usable_credential(&self) -> bool {
         self.usable.load(Ordering::SeqCst)
     }
@@ -2846,6 +2854,29 @@ async fn enqueue_after_drain_falls_back_to_inline() {
     );
 }
 
+/// Process-wide HTTP client for proxy-mode uploads in tests.
+///
+/// Constructing a stock `reqwest::Client` loads the OS trust store; on macOS
+/// that runs `SecTrustSettingsCopyCertificates`, which can take tens of
+/// seconds on machines with large target directories (CoreFoundation scans
+/// the binary's directory while resolving preferences). Each upload would
+/// otherwise build a fresh client inside the queue worker and stall
+/// single-threaded test runtimes well past the drain and parked-item
+/// deadlines these tests assert. These tests upload plaintext to loopback
+/// servers only, so the shared client skips TLS root loading and exercises
+/// the same `proxy_http_client` seam production callers use.
+fn shared_test_http_client() -> reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .tls_built_in_root_certs(false)
+                .build()
+                .expect("shared test http client")
+        })
+        .clone()
+}
+
 async fn spawn_test_server(app: axum::Router) -> Arc<dyn TraceExportSource> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -3480,6 +3511,10 @@ async fn inline_fallback_semaphore_bounds_concurrency() {
     }
 
     impl TraceExportSource for ConcurrencyResolver {
+        fn proxy_http_client(&self) -> Option<reqwest::Client> {
+            Some(shared_test_http_client())
+        }
+
         fn resolve(&self) -> TraceExportConfig {
             TraceExportConfig {
                 bucket_url: None,

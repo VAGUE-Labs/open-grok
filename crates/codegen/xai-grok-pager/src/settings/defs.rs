@@ -946,56 +946,6 @@ pub fn default_settings() -> Vec<SettingMeta> {
             restart_required: false,
             hidden_in_minimal: false,
         },
-        // Row is hidden entirely when the Antigravity CLI is not installed
-        // (see `setting_row_visible`); the gate is seeded once at startup.
-        SettingMeta {
-            key: "antigravity_subagents",
-            category: SettingCategory::Agent,
-            owner: SettingOwner::Shell,
-            label: "Antigravity subagents",
-            description: "Let Antigravity CLI (agy) models serve as subagents for task, swarm, and workflow tools (e.g. antigravity:gemini-3.6-flash, the reference model). Requires being signed in to agy. Subagents run with full access (agy skip-permissions) by default; set [antigravity] skip_permissions = false to force read-only, and callers that pin a read-only capability mode stay read-only either way. Restart required.",
-            keywords: &[
-                "antigravity",
-                "agy",
-                "gemini",
-                "subagent",
-                "delegate",
-                "cli",
-                "swarm",
-                "workflow",
-            ],
-            kind: SettingKind::Bool {
-                default: ui_default.antigravity_subagents.unwrap_or(false),
-            },
-            restart_required: true,
-            hidden_in_minimal: false,
-        },
-        // Shares the antigravity_subagents row's visibility gate — hidden when
-        // the `agy` CLI is absent (see `setting_row_visible`). SHELL-owned,
-        // persisted to `[antigravity].skip_permissions`.
-        SettingMeta {
-            key: "antigravity_skip_permissions",
-            category: SettingCategory::Agent,
-            owner: SettingOwner::Shell,
-            label: "Antigravity full access",
-            description: "Antigravity (agy) subagents run with agy's skip-permissions flag by default — they may write to the workspace and execute commands. Toggle OFF to force read-only researcher subagents; callers that pin a read-only capability mode (e.g. review/audit stages) stay read-only either way. Restart required.",
-            keywords: &[
-                "antigravity",
-                "agy",
-                "permissions",
-                "skip",
-                "full access",
-                "read-only",
-                "safety",
-            ],
-            kind: SettingKind::Bool {
-                // No UiConfig mirror; the effective default mirrors the runner's
-                // `[antigravity].skip_permissions.unwrap_or(true)` (full access).
-                default: true,
-            },
-            restart_required: true,
-            hidden_in_minimal: false,
-        },
         // SHELL-owned, persisted to `[ui].vim_mode` in config.toml.
         // Defaults to the same value main's `appearance::persist::VIM_MODE_DEFAULT`
         // shipped with. Bundled next to `simple_mode` because they pair up:

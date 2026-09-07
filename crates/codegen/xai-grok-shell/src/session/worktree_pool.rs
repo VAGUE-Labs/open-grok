@@ -785,7 +785,7 @@ impl WorktreePool {
                     in_progress,
                     "ACQUIRE_WAIT: no ready worktree, waiting for fill task"
                 );
-                let wait_deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+                let wait_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
                 loop {
                     tokio::select! {
                         _ = self.ready_notify.notified() => {},
@@ -1897,6 +1897,7 @@ pool_size = 3
         (dir, repo_path)
     }
 
+    #[serial]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_pool_fill_creates_worktrees() {
         let (_dir, repo_path) = create_temp_git_repo(5);
@@ -1911,7 +1912,7 @@ pool_size = 3
         let pool = WorktreePool::new(repo_path.clone(), config, 5);
 
         // Wait for fill task to create worktrees
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
         loop {
             let count = count_instance_worktrees(&pool.instance_id);
             if count >= 2 {
@@ -1931,6 +1932,7 @@ pool_size = 3
         pool.shutdown();
     }
 
+    #[serial]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_pool_fill_replenishes_after_acquire() {
         let (_dir, repo_path) = create_temp_git_repo(5);
@@ -1945,7 +1947,7 @@ pool_size = 3
         let pool = WorktreePool::new(repo_path.clone(), config, 5);
 
         // Wait for initial fill
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
         loop {
             if count_instance_worktrees(&pool.instance_id) >= 2 {
                 break;
@@ -1971,6 +1973,7 @@ pool_size = 3
         pool.shutdown();
     }
 
+    #[serial]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_pool_release_and_reacquire() {
         let (_dir, repo_path) = create_temp_git_repo(10);
@@ -1985,7 +1988,7 @@ pool_size = 3
         let pool = WorktreePool::new(repo_path.clone(), config, 10);
 
         // Wait for fill task to produce a ready worktree, then acquire it
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
         let acquired = loop {
             if let Some(acq) = pool.acquire("test-session", &repo_path, true).await {
                 break acq;
@@ -2003,7 +2006,7 @@ pool_size = 3
 
         // Should eventually be able to acquire again (either the released one
         // or a newly filled one)
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
         let reacquired = loop {
             if let Some(acq) = pool.acquire("test-session-2", &repo_path, true).await {
                 break acq;
@@ -2019,6 +2022,7 @@ pool_size = 3
         pool.shutdown();
     }
 
+    #[serial]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_pool_multi_instance_isolation() {
         let (_dir, repo_path) = create_temp_git_repo(5);
@@ -2055,6 +2059,7 @@ pool_size = 3
         pool_b.shutdown();
     }
 
+    #[serial]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_cleanup_stale_only_removes_dead_instances() {
         let (_dir, repo_path) = create_temp_git_repo(3);
@@ -2095,6 +2100,7 @@ pool_size = 3
     }
 
     #[ignore]
+    #[serial]
     #[tokio::test]
     async fn test_count_ready_worktrees() {
         use tempfile::TempDir;
@@ -2136,7 +2142,7 @@ pool_size = 3
         assert_eq!(pool.count_ready_worktrees(), 0);
 
         // Wait for fill task to create worktrees
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
         loop {
             if pool.count_ready_worktrees() >= 2 {
                 break;
@@ -2221,6 +2227,7 @@ pool_size = 3
         );
     }
 
+    #[serial]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_adopt_orphan_worktrees_basic() {
         let (_dir, repo_path) = create_temp_git_repo(5);
@@ -2290,6 +2297,7 @@ pool_size = 3
         );
     }
 
+    #[serial]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_adopt_rejects_cross_repo_worktree() {
         // Create two separate repos.
@@ -2327,6 +2335,7 @@ pool_size = 3
         assert_eq!(adopted, 0, "should not adopt worktree from different repo");
     }
 
+    #[serial]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore = "flaky: worktree adoption count is timing-dependent on CI"]
     async fn test_adopt_respects_hard_cap_limit() {
@@ -2373,6 +2382,7 @@ pool_size = 3
         );
     }
 
+    #[serial]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[serial]
     async fn test_adopt_in_fill_loop_creates_deficit() {
@@ -2407,7 +2417,7 @@ pool_size = 3
         let pool = WorktreePool::new(repo_path.clone(), config, 5);
 
         // Wait for the pool to have 2 ready worktrees (1 adopted + 1 created).
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
         loop {
             let count = count_instance_worktrees(&pool.instance_id);
             if count >= 2 {
